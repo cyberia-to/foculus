@@ -220,9 +220,9 @@ one number: 50 us to verify that the complete tri-kernel (diffusion + springs + 
 provable consensus composes recursively with zheng's folding:
 
 ```
-epoch 1: prove π*₁ from graph state G₁
-epoch 2: prove π*₂ from graph state G₂
-         FOLD: prove (proof₁ valid ∧ G₂ = G₁ + new_signals ∧ π*₂ correct)
+epoch 1: prove φ*₁ from graph state G₁
+epoch 2: prove φ*₂ from graph state G₂
+         FOLD: prove (proof₁ valid ∧ G₂ = G₁ + new_signals ∧ φ*₂ correct)
 epoch N: ONE accumulated proof covers ALL history
 
 verification: 50 μs regardless of how many epochs
@@ -243,13 +243,13 @@ nebu  (Goldilocks field arithmetic)
   ↓
 hemera  (Poseidon2 hash — for signal identity, NOT for state reads)
   ↓
-zheng  (SuperSpartan + WHIR — proves π* computation)
+zheng  (SuperSpartan + WHIR — proves φ* computation)
   ↓
 nox  (16 reduction patterns — SpMV as execution trace)
   ↓
 algebraic NMT  (polynomial state — enables O(1) graph reads in-circuit)
   ↓
-provable consensus  (π* proven correct, finality from proof)
+provable consensus  (φ* proven correct, finality from proof)
 ```
 
 remove algebraic NMT and graph reads cost O(log n) hemera each, pushing 15x over zheng capacity, making the approach infeasible.

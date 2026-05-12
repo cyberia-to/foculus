@@ -83,7 +83,7 @@ $$\|\phi^{(t)} - \phi^*\|_1 \leq \frac{\kappa^t}{1-\kappa} \|\phi^{(0)} - T(\phi
 
 ### convergence in distribution
 
-a sequence of probability distributions approaches a limit distribution. this is what [[diffusion]] achieves: the random walk distribution converges to the stationary distribution $\pi^*$ regardless of the starting distribution. the [[Perron-Frobenius theorem]] guarantees this for ergodic chains
+a sequence of probability distributions approaches a limit distribution. this is what [[diffusion]] achieves: the random walk distribution converges to the stationary distribution $\phi^*$ regardless of the starting distribution. the [[Perron-Frobenius theorem]] guarantees this for ergodic chains
 
 ---
 
@@ -103,7 +103,7 @@ the Babylonian method for $\sqrt{a}$ is Newton's method applied to $f(x) = x^2 -
 
 ### Markov chains
 
-a random walker moves through a graph. at each step, it jumps to a neighbor with probability proportional to edge weights. the distribution over positions converges to the stationary distribution $\pi^*$ satisfying $\pi^* = \pi^* P$
+a random walker moves through a graph. at each step, it jumps to a neighbor with probability proportional to edge weights. the distribution over positions converges to the stationary distribution $\phi^*$ satisfying $\phi^* = \phi^* P$
 
 the [[Perron-Frobenius theorem]] guarantees convergence when the chain is irreducible (all states reachable) and aperiodic (no forced cycles). the [[spectral gap]] controls the rate. PageRank is this: a random walk with teleport on the web graph
 
@@ -216,7 +216,7 @@ convergence is the journey. [[equilibrium]] is the arrival. [[intelligence]] is 
 
 a protein folds by minimizing [[free energy]]. no theorem of chemistry derives the fold. the protein converges to it. a market finds [[equilibrium]] price through trades. no axiom system derives the price. the market converges to it
 
-the [[cybergraph]] finds [[collective focus]] by iterating the [[tri-kernel]]. no formal system derives $\pi^*$. the contraction mapping finds it. this is proof by simulation -- the foundation of [[cybics]]
+the [[cybergraph]] finds [[collective focus]] by iterating the [[tri-kernel]]. no formal system derives $\phi^*$. the contraction mapping finds it. this is proof by simulation -- the foundation of [[cybics]]
 
 where voting requires rounds, messages, leaders, and quorums, convergence requires a graph, an operator, and iteration. the fixed point emerges from the topology of attention. consensus is computed, not negotiated
 

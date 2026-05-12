@@ -1,13 +1,13 @@
 # foculus
 
-consensus by convergence. a [[particle]] is final when $\pi_i > \tau$
+consensus by convergence. a [[particle]] is final when $\phi^*_i > \tau$
 
 ## reference
 
 implementable specifications:
 
 - [foculus.md](reference/foculus.md) — protocol spec: network model, state, conflicts, fork choice, 7-step protocol, safety/liveness proofs, performance
-- [provable-consensus.md](reference/provable-consensus.md) — circuit spec: proving π* in a [[zheng]] circuit, cost analysis, recursive composition
+- [provable-consensus.md](reference/provable-consensus.md) — circuit spec: proving φ* in a [[zheng]] circuit, cost analysis, recursive composition
 - [vec.md](reference/vec.md) — verified eventual consistency: six properties (P1-P6), CRDT safety, NMT completeness, DAS availability
 
 ## docs
