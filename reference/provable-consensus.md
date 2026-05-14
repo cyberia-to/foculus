@@ -67,7 +67,7 @@ total constraints for $\phi^*$ computation: 23 x 47.8M = 1.1B
 
 ### zheng capacity
 
-[[zheng]] (SuperSpartan + WHIR) handles up to 2^32 = 4.3 billion constraints. 1.1B / 4.3B = 25.6% of capacity. the full tri-kernel uses a quarter of what zheng can prove.
+[[zheng]] (SuperSpartan + Brakedown) handles up to 2^32 = 4.3 billion constraints. 1.1B / 4.3B = 25.6% of capacity. the full tri-kernel uses a quarter of what zheng can prove.
 
 remaining capacity (74.4%): graph reads (algebraic NMT openings), finalization checks (tau threshold), nullifier verification, state transition application.
 
@@ -243,7 +243,7 @@ nebu  (Goldilocks field arithmetic)
   ↓
 hemera  (Poseidon2 hash — for signal identity, NOT for state reads)
   ↓
-zheng  (SuperSpartan + WHIR — proves φ* computation)
+zheng  (SuperSpartan + Brakedown — proves φ* computation)
   ↓
 nox  (16 reduction patterns — SpMV as execution trace)
   ↓
