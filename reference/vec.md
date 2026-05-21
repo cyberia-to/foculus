@@ -124,7 +124,7 @@ verify_signal(signal, proof):
   4. assert Brakedown_verify(commitment, r, proof.value, proof.opening)
 ```
 
-cost: O(log N) Hemera hashes + field ops. ~50 us independent of computation size (recursive proof compresses all history). an invalid signal cannot be constructed -- the constraint system (16 deterministic reduction patterns of [[nox]]) prevents it.
+cost: O(log N) Hemera hashes + field ops. ~50 us independent of computation size (recursive proof compresses all history). an invalid signal cannot be constructed -- the constraint system (18 patterns of [[nox]]: 16 compute + call + look) prevents it.
 
 ## P6: ordering (immutable causal structure)
 
@@ -197,7 +197,7 @@ the cyber proof stack composes vertically:
 ```
 application (cybergraph operations)
      ↓ expressed as
-nox (16 reduction patterns, focus-metered execution)
+nox (18 patterns: 16 compute + call + look, focus-metered execution)
      ↓ proven by
 zheng (SuperSpartan IOP + Brakedown PCS)
      ↓ committed via

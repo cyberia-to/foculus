@@ -245,7 +245,7 @@ hemera  (Poseidon2 hash — for signal identity, NOT for state reads)
   ↓
 zheng  (SuperSpartan + Brakedown — proves φ* computation)
   ↓
-nox  (16 reduction patterns — SpMV as execution trace)
+nox  (18 patterns: 16 compute + call + look — SpMV as execution trace)
   ↓
 algebraic NMT  (polynomial state — enables O(1) graph reads in-circuit)
   ↓
