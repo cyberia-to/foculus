@@ -203,4 +203,4 @@ damping prevents concentration: $\phi^*_i \leftarrow \phi^*_i \cdot \gamma^t$, $
 
 [[consensus]] is computed, not voted
 
-see [[collective focus theorem]] for convergence proofs. see [[tri-kernel]] for the operators. see [[focus flow computation]] for the full protocol specification. see [[cyber/state]] for the world state model. see [[cyber/security]] for the nullifier security proof
+see [[collective focus theorem]] for convergence proofs. see [[tri-kernel]] for the operators. see [[focus flow computation]] for the full protocol specification. see [[cyber/state]] for the world state model. see [[cyber/security]] for the nullifier security proof. see [[foculus beacon]] for the epoch randomness beacon derived from the finalized set
