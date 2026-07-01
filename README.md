@@ -11,6 +11,7 @@ implementable specifications:
 - [vec.md](reference/vec.md) — verified eventual consistency: six properties (P1-P6), CRDT safety, NMT completeness, DAS availability
 - [beacon.md](reference/beacon.md) — epoch randomness beacon $b_E$: VDF over finalized signals; unpredictable, unbiasable, verifiable, live
 - [fold-mining.md](reference/fold-mining.md) — second lottery: HyperNova fold tree aggregates settlement tickets into one O(1) accumulator per cluster; closes settlement liveness
+- [security-at-scale.md](reference/security-at-scale.md) — five theorems extending safety and liveness to $N \to 10^{15}$: subgraph Lipschitz (S1), partial-view safety (S2), spectral gap lower bound (S3), shard composition (S4), liveness at scale (S5)
 
 ## docs
 
