@@ -8,7 +8,7 @@ implementable, normative — what a builder implements against:
 
 - [protocol.md](specs/protocol.md) — the protocol spec: network model, state, conflicts, fork choice, seven-step protocol, safety/liveness, performance. amended to fold in domain-local certification, the support-switching rule, and the conditional spectral-gap theorem — see `security-at-scale.md` for the derivations
 - [parameters.md](specs/parameters.md) — every protocol constant in one place: tri-kernel weights, VDF delays, precision floor, reorg depth, epoch windows — derived, measured, or explicitly chosen
-- [gossip.md](specs/gossip.md) — the propagation layer VEC P4 assumes: no message envelope, a signal *is* the gossip message; push for new signals, pull for VEC P2 completeness proofs; peer topology should mirror the cybergraph's own domain locality, not a flat random overlay
+- [gossip.md](specs/gossip.md) — the propagation layer VEC P4 assumes: no message envelope, a signal *is* the gossip message; push for new signals, pull for VEC P2 completeness proofs. topology starts with explicit domain subscription (proven, gossipsub-style, via radio); graph-inferred peer affinity is named as a future direction, not the starting design — see the document's own opening for why
 - [provable-consensus.md](specs/provable-consensus.md) — circuit spec: proving φ* in a [[zheng]] circuit, cost analysis, recursive composition
 - [vec.md](specs/vec.md) — verified eventual consistency: six properties (P1-P6), CRDT safety, NMT completeness, DAS availability
 - [beacon.md](specs/beacon.md) — epoch randomness beacon $b_E$: VDF over finalized signals; unpredictable, unbiasable, verifiable, live

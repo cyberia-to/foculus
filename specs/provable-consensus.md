@@ -61,7 +61,7 @@ each operator is a sparse matrix-vector multiply (SpMV). heat requires TWO SpMV 
 
 ### convergence
 
-from the [[spectral gap]] observation: [[bostrom]] converges in 23 iterations (measured contraction kappa = 0.74, lambda_2 = 0.13). the tri-kernel composite has contraction rate $\kappa = \max(\lambda_d \kappa_D, \lambda_s \kappa_S, \lambda_h \kappa_H)$ -- the slowest operator determines convergence. empirically: 23 iterations suffice for all three operators simultaneously.
+from the [[spectral gap]] observation: [[bostrom]] converges in 23 iterations (measured contraction kappa = 0.74, lambda_2 = 0.13). the tri-kernel composite has contraction rate $\kappa = \lambda_d \alpha + \lambda_s\frac{\|L\|}{\|L\|+\mu} + \lambda_h e^{-\tau_{\text{heat}}\lambda_2}$ ([[convergence]]) -- a convex combination of each operator's own contraction rate, not a max of them: an earlier version of this document stated $\kappa=\max(\lambda_d\kappa_D,\lambda_s\kappa_S,\lambda_h\kappa_H)$, "the slowest operator determines convergence," which contradicts [[convergence]]'s own derivation (the $\kappa<1$ proof there is specifically a convexity argument -- a convex combination of terms each below 1 is itself below 1 -- which only holds for the weighted sum, not a max) and every other document in this repo using the composite formula. empirically: 23 iterations suffice for all three operators simultaneously under the corrected formula too, since $\kappa=0.74$ is a direct measurement of the actual composite, not a recomputation from the max form.
 
 total constraints for $\phi^*$ computation: 23 x 47.8M = 1.1B
 

@@ -62,7 +62,7 @@ $d$ is the single highest-leverage undetermined parameter in this list: it is lo
 | symbol | meaning | status |
 |---|---|---|
 | $f$ | gossip broadcast fanout | lower bound only, $f\geq2$, the minimum for epidemic coverage; specific value undetermined |
-| affinity-vs-random peering split | fraction of a neuron's peers chosen by domain affinity vs. uniform random sample | undetermined -- real security consequence (too little random-sample peering plausibly weakens eclipse resistance), not just a performance knob |
+| subscription-vs-random peering split | fraction of a neuron's peers chosen by domain subscription vs. uniform random sample | undetermined -- real security consequence (too little random-sample peering plausibly weakens eclipse resistance), not just a performance knob |
 | batching threshold | whether/how multiple signals get combined into one transport round when relaying | undetermined |
 | DAS sample count $k$ | data-availability sampling depth | the one parameter in this repo with concrete recommended values, from [[vec]] directly: $k=20\to99.9999\%$ confidence, $k=30\to99.99999999\%$ |
 
