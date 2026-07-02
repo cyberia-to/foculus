@@ -1,6 +1,12 @@
 # foculus: reorg for implementation
 
-status: proposed, not executed. written for review before any file moves.
+status: phases 0-2 executed and committed. phase 3 (gossip.md, wire-format.md) and phase 4 (rs/ scaffold) remain.
+
+phase 0: done -- reference/ -> specs/, foculus.md -> protocol.md, docs/ -> docs/explanation/, roadmap/ created with 8 files extracted from security-at-scale.md's open-problems section, external cross-reference in soft3 fixed.
+
+phase 1: done -- protocol.md amended: domain-local certification as the finalization gate, support switching as protocol step 4 (with the wrong "contraction amplifies the gap" claim corrected, not just softened), economic-neutrality rule stated as a normative invariant, spectral-gap claim corrected from unconditional to T2's conditional form, the unconditional κ_max=0.925 contraction ceiling promoted to the liveness proof's headline, κ-vs-κ' notation collision fixed, open-questions section updated. security-at-scale.md re-scoped as the derivation record.
+
+phase 2: done -- parameters.md written. finding: most "parameters" reused across the spec set are illustrative example values with no chosen status (α, ε, δ, Δ, δ_stake) or fully undetermined (μ, τ_heat, T_min, T_beacon, epoch windows, q, d). only λ_d/λ_s/λ_h and DAS's k are actually chosen. flagged a second notation collision (τ as both finality threshold and heat bandwidth) not previously caught. d is the highest-leverage gap -- three other undetermined items already assume it's shared.
 
 ## why now
 
