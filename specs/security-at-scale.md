@@ -1,0 +1,204 @@
+---
+tags: reference, research
+crystal-type: spec
+crystal-domain: cyber
+status: draft
+alias: security at scale, foculus security proof, scale security, distributed phi star, shard safety, localized consensus
+---
+
+# foculus security at scale
+
+the [[foculus]] safety and liveness proofs — the [[collective focus theorem]] and the exclusive support argument in [[foculus]] — assume every [[neuron]] computes $\phi^*$ from the same complete graph $G$. this document removes that assumption. the resolving idea, arrived at only after an earlier draft's global-L1 machinery collapsed under its own numbers, is **locality**: bind safety and liveness to the same $\varepsilon$-support domain that [[reward specification]] §7 already uses for settlement, rather than to the full $N \to 10^{15}$-particle graph. everything that failed at planetary scale — an unsatisfiable view-completeness bound, a contraction rate $\kappa$ silently treated as constant while $\lambda_2$ is argued to collapse, a global $\sigma_{\phi^*}$ blind to any single conflict — fails because it was stated about the wrong object. stated about the conflict's own domain, the same arguments go through.
+
+## the gap
+
+the base proof assumes every [[neuron]] computes $\phi^*$ from the same graph $G$. at scale this is false. each neuron holds $G_v \subsetneq G$ — a local view. two neurons with different views compute $\hat\phi^*_u \neq \hat\phi^*_v$. the question: can they disagree on finality in a way that breaks safety?
+
+the answer is no, once four gaps in the original argument are closed:
+
+1. **locality** (theorems L1–L2 below). the global Lipschitz/safety bound requires seeing 99.9%+ of *all planetary stake* — meaningless at $N=10^{15}$, since any single conflict's $\phi^*$-gap is $O(1/N)$ of the planetary total, not $O(1)$. bound the argument to the conflict's own $\varepsilon$-support domain instead, where the gap is $\Theta(1)$ of *domain* mass.
+2. **the honest-split stall has no exit** (theorem T1). foculus as specified has no rule that moves stake once honest neurons split near 50/50 on a conflict — the "contraction amplifies the gap" claim in an earlier draft was wrong, because the gap is a static property of a static support set. closing this needs one added protocol rule, not just a proof.
+3. **$\kappa$ is not a free constant** (folded into L1/L2 and T1). [[convergence]] already gives the composite contraction rate as $\kappa = \lambda_d\alpha + \lambda_s(\|L\|/(\|L\|+\mu)) + \lambda_h e^{-\tau\lambda_2}$ — a function of the *local* spectral gap $\lambda_2$, not a protocol constant. treating $\kappa=0.74$ as fixed while separately arguing $\lambda_2$ can collapse was self-contradictory. once every bound below is stated per-domain, $\kappa$ and $\lambda_2$ are evaluated together, on the same object, and the contradiction disappears.
+4. **the [[spectral gap]] is not a free consequence of honest majority** (theorem T2). cyberlinks are content assertions; honest majority controls stake, not semantic overlap. T2 replaces an unconditional (and false) claim with a conditional theorem: rational neurons close any gap between the *realized* graph and the *semantic* ceiling, and no theorem can or should promise more.
+
+## formal model
+
+let $G = (P, E, w)$ be the true global [[cybergraph]] at time $t$: particles $P$, [[cyberlinks]] $E$, stake weights $w : E \to \mathbb{R}_+$.
+
+each neuron $v$ holds local view $G_v = (P_v, E_v, w_v)$ with $P_v \subseteq P$, $E_v \subseteq E$.
+
+the [[tri-kernel]] operator $T$ on graph $G$ is the composite $T(\phi;G) = \operatorname{norm}[\lambda_d D(\phi;G) + \lambda_s S(\phi;G) + \lambda_h H(\phi;G)]$, with composite contraction rate
+
+$$\kappa(\lambda_2) \;=\; \lambda_d\alpha \;+\; \lambda_s\frac{\|L\|}{\|L\|+\mu} \;+\; \lambda_h\, e^{-\tau\lambda_2} \qquad (\text{[[convergence]]}),$$
+
+a function of the *local* spectral gap $\lambda_2$ of whatever subgraph $T$ acts on. the ceiling is rigorous: since $\|L\|/(\|L\|+\mu) \leq 1$ and $e^{-\tau\lambda_2}\leq1$ universally, $\kappa(\lambda_2) \leq \kappa_{\max} = \lambda_d\alpha + \lambda_s + \lambda_h$ for every topology, with equality only in the limit where springs and heat both fail to contract simultaneously. using $\lambda_d+\lambda_s+\lambda_h=1$: $\kappa_{\max} = \lambda_d\alpha + (1-\lambda_d) = 1-\lambda_d(1-\alpha)$ — with $\lambda_d=0.5,\alpha=0.85$: $\kappa_{\max}=0.925$.
+
+**this delivers an unconditional convergence guarantee, and it is the strongest fact in this document: the tri-kernel iteration never stalls, on any topology, including $\lambda_2\to0$ — it contracts at worst rate $1-\lambda_d(1-\alpha)=0.925<1$.** this is about the *iteration*, not full liveness: $\lambda_2$ never threatens whether $\phi^*_D$ converges, only how fast, within the band $[\kappa_{\min}^{(\text{est})},\,0.925]$ — actual finality still needs propagation plus a sufficient gap (L2, T1) on top of this. this is why L1/L2/S5 below hold even in the "sparse-fringe" regime; localization fixes the safety-budget and liveness-time numbers, but this floor is what guarantees the tri-kernel never stops contracting in the first place, independent of localization.
+
+the floor is *not* as clean: at $\lambda_2\to\infty$ the heat term vanishes, but $\lambda_s\cdot\|L\|/(\|L\|+\mu)$ has no stated $\lambda_2$-dependence in [[convergence]]'s formula — it depends on $\|L\|$ (the full, unscreened Laplacian norm) and the screening constant $\mu$, which are graph-specific and not simply characterized by $\lambda_2$ alone. so $\kappa_{\min}=\lambda_d\alpha=0.425$, used below for the hub-domain speed row, is an *estimate* assuming the springs term also becomes small on well-connected domains — plausible (dense hubs typically have small $\|L\|/(\|L\|+\mu)$ too) but not derived from the formula as stated. the bostrom-empirical point ($\kappa=0.74,\lambda_2=0.13$) is consistent with the full formula for reasonable $\tau,\|L\|$, so the formula itself is trusted — only the specific floor value is an estimate, not a proof.
+
+**Assumption G (gossip uniformity).** each [[cyberlink]] $(i\to j,w)$ reaches a given neuron independently with probability $\geq 1-\varepsilon_v$, regardless of source, target, or current $\phi^*$ mass — i.e. the missing-edge indicator is independent of the mass distribution. holds under non-targeted gossip delay; breaks under selective withholding of signals about specific high-mass particles (open, below).
+
+**conflict domain.** for conflicting particles $\{W,L\}$, let $D$ be the union of their $\varepsilon$-supports — the canonical, deterministic region [[reward specification]] §7 already defines for settlement: radius $r = O(\log(1/\varepsilon)/\log(1/\lambda_{\text{local}}))$ hops, content-dependent size (wide around a hub, tiny on a sparse fringe), boundary certified by a [[VEC|VEC P2]] range proof so no party can redraw it self-servingly. $D$ has $\operatorname{poly-log}(1/\varepsilon)$ significant particles, independent of planetary $N$ — this single fact is what makes every bound below $N$-free.
+
+## theorem L1: local subgraph Lipschitz
+
+$$\bigl\|\phi^*_D(G) - \phi^*_D(G_v)\bigr\|_1 \;\leq\; \frac{C}{1-\kappa_D}\,\Phi_{\text{uncert}}^{(D)} \;+\; O(\varepsilon)$$
+
+where $\Phi_{\text{uncert}}^{(D)}$ is the $\phi^*_D(G_v)$-mass held by particles whose in-domain source chains are **not yet P2-certified complete** — a quantity the neuron computes entirely from its own current view *given a known, correctly enumerated source set* (a caveat this document only narrows, see below, not closes) — $\kappa_D=\kappa(\lambda_2(D))$, and $C\leq2.25$ as before.
+
+**why $\Phi_{\text{uncert}}^{(D)}$ (mass-weighted), not $\varepsilon_v^{(D)}$ (edge-weight fraction) — an earlier version of this bound was wrong.** a prior draft claimed the diffusion perturbation is bounded by $2\alpha\varepsilon_v^{(D)}$ "regardless of which particular edges are missing." false: the exact sum is $2\alpha\sum_i\phi[i]f_i$, where $f_i$ is the fraction of node $i$'s *own* out-weight missing — not the fraction of *total domain* weight missing. these coincide only in expectation under uniform (Assumption-G-style) missingness. worst case they diverge without bound: take a node $i^*$ with high $\phi[i^*]$ and small out-weight $W_{i^*}$, and withhold all of $i^*$'s out-edges. then $\varepsilon_v^{(D)}=W_{i^*}/W_D$ can be tiny while $f_{i^*}=1$, giving perturbation $2\alpha\phi[i^*]$ — unbounded by the stake-fraction form no matter how small $\varepsilon_v^{(D)}$ is. this is exactly the adversarial-withholding pathology already flagged for the un-localized, global version of this bound; dropping Assumption G while keeping the $\varepsilon$-form silently reintroduced it.
+
+**proof (correct form).** [[VEC|VEC P2]] certification is *binary per source*: once a source's in-domain chain is P2-certified complete, its contribution to $D$ is exactly known, so $f_i=0$ for every particle whose relevant sources are all certified — not probably zero, exactly zero, no concentration inequality needed anywhere. for particles with at least one uncertified source, the worst case is $f_i=1$ (that source could be withholding anything). so $\sum_i\phi[i]f_i \leq \sum_{i:\text{uncertified}}\phi[i] = \Phi_{\text{uncert}}^{(D)}$ — a sum only over uncertified particles, weighted by their own $\phi^*_D(G_v)$ mass. this bounds the diffusion perturbation by $2\alpha\Phi_{\text{uncert}}^{(D)}$; springs and heat contribute analogously (same $C=2.25$ upper-bound caveat as before — summed independently, not jointly optimized; unlike diffusion, this per-node worst case has not actually been computed for the other two operators — listed as proof debt below, not just a parenthetical). combined with the $\kappa_D$-contraction of the fixed-point identity's first term, this gives the stated bound directly, with no probabilistic step at any point. the $O(\varepsilon)$ tail is unchanged: edges outside $D$'s $r$-hop boundary perturb $\phi^*_D$ by less than $\varepsilon$, by the locality property already proven for $\Delta\phi^+$ ([[reward specification]] §2). $\square$
+
+**the evaluation point is load-bearing, not incidental.** the identity's perturbation term is evaluated at $\phi^*_D(G_v)$ — the neuron's *own current* fixed point — not at the true $\phi^*_D(G)$. this is what makes $\Phi_{\text{uncert}}^{(D)}$ computable at all (a neuron can compute its own $\phi^*_D(G_v)$; it cannot compute the unknown $\phi^*_D(G)$) and simultaneously what makes the bound resistant to a natural-looking attack: an adversary starving a high-mass particle $i^*$ of its inbound edges to make $\phi^*_D(G_v)[i^*]$ look artificially small does not escape the accounting, because every withheld edge $(j\to i^*)$ is an edge $j$ would need to be P2-certified to have legitimately omitted — so $j$ itself becomes uncertified and is charged at $j$'s *own* $\phi^*_D(G_v)$-mass instead. the mass an adversary hides at $i^*$ reappears, charged to whoever was supposed to deliver it. view-mass weighting is therefore the correct measure, not merely a convenient one — worth stating explicitly so a future simplification to "true mass" doesn't quietly reopen this.
+
+**what this buys, and what it costs.** the fix is a restatement, not new machinery: $D$ has poly-log sources, each P2-certified in $O(\log n)$, so certifying enough of them to bound $\Phi_{\text{uncert}}^{(D)}$ is cheap. the real change is what a neuron must prioritize — not "see 99.6% of edges, any edges" but "certify sources holding the highest $\phi^*_D$ mass first," since low-mass uncertified sources contribute negligibly to $\Phi_{\text{uncert}}^{(D)}$ regardless of how many edges they represent. this is a more sensible requirement than the broken one — it directs certification effort at exactly the particles whose completeness matters. **Assumption G survives only as the model of the pre-certification propagation phase** (how signals reach a neuron before it can assemble P2 proofs over them, still bounding $t_{\text{prop}}$ probabilistically, below) — never as a substitute for certification in the finalization bound itself.
+
+**a gap this claim overreaches on: "no knowledge of true $G$ required" is not quite true.** computing $\Phi_{\text{uncert}}^{(D)}$ requires not just P2-certifying known sources but *knowing the set of sources to certify* — and nothing in P2 establishes that set is complete. P2 proves "everything source $s$ published," never "these are all the sources." a source the neuron has never heard of contributes real missing edges at some node $i$ — the true $f_i>0$ — while the neuron, seeing only its *known* sources certified, computes $f_i=0$ and silently undercounts $\Phi_{\text{uncert}}^{(D)}$. this is a distinct failure mode from a known source withholding edges (closed above by the evaluation-point argument): it is an enumeration problem, one level above completeness.
+
+**the repair: anchor the source set to a stake snapshot, not to gossip discovery.** only stake-backed cyberlinks matter for $A^{\text{eff}}$ ([[reward specification]] §3), and stake positions are settled state — so the set of sources holding in-domain stake as of a $d$-deep stable [[bbg|BBG]] root is enumerable directly from that committed root, not assembled by hoping gossip surfaced everyone. "all relevant sources certified" then becomes checkable against a closed list instead of an open-ended one. cost: stake entering within the last $d$ epochs does not count toward $A^{\text{eff}}$ for finalization purposes until it is snapshot-visible — a one-parameter activation delay, structurally identical to the pulse-escrow depth [[reward specification]] already requires, and plausibly the *same* $d$. this is stated here as the shape of the fix, not a proven lemma — "$\Phi_{\text{uncert}}^{(D)}$ is computable given source-set anchoring at depth $d$" belongs in a future revision as its own lemma, and until then the "no knowledge of true $G$ required" claim above should be read as conditional on it.
+
+## theorem L2: local safety under partial synchrony
+
+let $W,L$ be conflicting particles, $\Delta_D = \phi^*_D(W) - \phi^*_D(L) > 0$. no correct neuron finalizes $L$ while another finalizes $W$, provided
+
+$$\Phi_{\text{uncert}}^{(D)} \;<\; \frac{(1-\kappa_D)\,\Delta_D}{C(1+\kappa')} \;-\; O(\varepsilon), \qquad \kappa' \in [1,2] \text{ the adaptive-threshold multiplier}.$$
+
+**proof.** the same three-step contradiction as before, with $\Phi_{\text{uncert}}^{(D)}$ in place of $\varepsilon_v^{(D)}$ throughout: (1) L1 bounds $\hat\phi^*_{v,D}(L) \leq \phi^*_D(L) + C\Phi_{\text{uncert}}^{(D)}/(1-\kappa_D)$; (2) the local threshold $\tau_D=\mu_D+\kappa'\sigma_D$ shifts by at most $\kappa' C\Phi_{\text{uncert}}^{(D)}/(1-\kappa_D)$ from the fixed-domain-mean property; (3) combining, $L$ finalizing anywhere requires $C\Phi_{\text{uncert}}^{(D)}(1+\kappa')/(1-\kappa_D) > \Delta_D$, which the theorem's condition rules out. $\square$
+
+**computing $\Delta_D$ — the number that was wrong before is right now.** with exclusive support restricted to $D$: $\Delta_D = \alpha(S_W^{(D)} - S_L^{(D)})$, $S_W^{(D)}+S_L^{(D)}=1$ (all of $D$'s local conflict stake, not planetary stake). under the honest-split worst case (honest stake $H=1/2+\delta_{\text{stake}}$ split, adversary $A=1/2-\delta_{\text{stake}}$ directed entirely to $L$): $\Delta_{D,\min}\to 0$ as the honest split approaches 50/50 — this is the honest-split attack, closed separately by T1. under the *expected* case (random propagation order): $\Delta_{D,\text{expected}} = \alpha\cdot 2\delta_{\text{stake}}$.
+
+with $\alpha=0.85$, $\delta_{\text{stake}}=0.05$: $\Delta_{D,\text{expected}} = 0.085$ — the same number an earlier draft used, but now correctly interpreted as a fraction of the *domain's* local stake mass, where it is meaningful, rather than of planetary stake mass, where it was absurd.
+
+using $\kappa_D=0.74$ (bostrom-empirical point), $C=2.25$, $\kappa'=1.5$:
+
+$$\Phi_{\text{uncert}}^{(D)} \;<\; \frac{0.26 \times 0.085}{2.25\times 2.5} \;=\; \frac{0.0221}{5.625} \;\approx\; 0.00393$$
+
+particles whose sources are not yet P2-certified may hold at most 0.4% of domain $\phi^*_D$-mass before finalizing — a $\phi^*$-weighted bound, not a raw edge- or stake-count — achievable, since $D$ is poly-log-sized and certification targets the highest-mass sources first (L1). the *propagation* time to gather enough signals to attempt certification still scales as $O(\Delta\log|D|)$, and $|D|$ does not scale with planetary $N$: for $|D|$ on the order of a few thousand significant particles ($r\approx7$ hops at $\varepsilon=10^{-6}$, $\lambda_{\text{local}}\approx0.13$): $\log|D|\approx8$, giving $t_{\text{prop}}\approx8\Delta\approx3.2\text{s}$ at $\Delta=0.4\text{s}$ — independent of $N$.
+
+**the adaptive-threshold stabilizer now works as originally intended.** a conflict inside $D$ measurably raises $\sigma_D$ (computed over $D$'s own poly-log particles), which was the whole point of the mechanism — a conflict's contribution to a *global* $\sigma$ over $10^{15}$ entries is invisible, which is why the stall argument failed at planetary scale before localization.
+
+## theorem T1: honest-split timing (requires a protocol amendment)
+
+**foculus as specified cannot resolve a near-50/50 honest split.** contraction converges *to* the current fixed point; it does not move support between $W$ and $L$, because $\Delta_D = \alpha(S_W^{(D)}-S_L^{(D)})$ is static once the split is static — nothing in the seven-step protocol changes $S_W^{(D)}$ or $S_L^{(D)}$ after initial propagation. an earlier draft's claim that "the tri-kernel contraction amplifies the initial gap" was wrong: contraction amplifies convergence *toward* a fixed point, not the gap *between* two competing fixed points of a static graph. this must be named as a missing protocol rule, not proof-debt.
+
+**rule (support switching, new).** each round, a neuron with stake on the locally-losing member of a conflict re-points it to the local leader with probability $q$ per round. re-pointing is a new [[cyberlink]] signal, hence rate-limited by [[VEC|VEC P6]]'s VDF to at most one per $T_{\min}$ per source.
+
+**economic neutrality (required before $q$ can be tuned).** a re-pointing signal is still a [[cyberlink]], and cyberlinks are scored by [[reward specification]]'s $\Delta\phi^+$, BTS surprise, and ICBS pricing — left unaddressed, a strategic neuron could delay switching to preserve a surprising (high-reward) position, coupling finality latency to reward optimization, exactly what [[reward specification]] §14's layer separation exists to prevent. the amendment must therefore declare switching signals **consensus-only: zero mint, zero BTS exposure, $v_\ell=0$ by protocol rule** — a re-point moves $\phi^*_D$ and nothing else. this must be fixed *before* the anti-concentration proof debt below is discharged, since strategic delay under a rewarded switch is a different stochastic process than the neutral one T1 analyzes.
+
+**theorem T1.** under the switching rule, honest stake margin $\delta_{\text{stake}}$, and uncertified mass $\Phi_{\text{uncert}}^{(D)} < \Phi_{\text{uncert,max}}^{(D)}$ (L2), expected time for one of $\{W,L\}$ to finalize is
+
+$$\mathbb{E}[t_{\text{final}}] \;=\; O\!\left(\frac{T_{\min}}{q\,\delta_{\text{stake}}}\log\frac{1}{\Delta_{\text{noise}}}\right), \qquad \Delta_{\text{noise}} = \Theta\!\left(\sqrt{q/S_{\text{atoms}}}\right),$$
+
+with exponential tail.
+
+**proof sketch.** let $\Delta_t = S_W^{(D)}(t) - S_L^{(D)}(t)$. switching gives drift $\mathbb{E}[\Delta_{t+1}-\Delta_t\mid\Delta_t] = qH\cdot g(\Delta_t) - a_t$ where $g$ is odd and increasing near 0 (uncertified mass below $\Phi_{\text{uncert,max}}^{(D)}$ guarantees neurons perceive the correct sign of $\Delta_t$ outside the noise floor, by L1) and $a_t$ is the adversary's counter-push, bounded by its own VDF-limited signal rate. three steps: (i) from $\Delta_0\approx0$, independent switching decisions are a martingale whose fluctuations escape the symmetric point within $O(1/q)$ rounds by anti-concentration — the same mechanism that makes Avalanche-family consensus's metastable states resolve rather than persist, though the analogy is structural, not a transplanted proof; (ii) once $|\Delta_t|>\Delta_{\text{noise}}$, honest push $qH\cdot g(\Delta_t)$ exceeds the adversary's VDF-bounded $qA$ counter-push since $H-A=2\delta_{\text{stake}}>0$, so $\Delta_t$ grows; (iii) crossing $\tau_D$ takes $O(\log(1/\Delta_{\text{noise}}))$ drift rounds of length $T_{\min}/q$. exponential tail via optional stopping on $e^{-c\Delta_t}$. $\square$
+
+**status.** the drift argument (ii) and the threshold-crossing argument (iii) are solid, standard mechanics. the anti-concentration escape in (i) is asserted by analogy rather than derived — the exact anti-concentration lemma for this specific switching process is proof debt, not a gap in the approach. **the load-bearing fact this exposes:** VEC P6's VDF rate limit, previously justified only as an equivocation deterrent, turns out to be what converts "adversary with 49% stake" into "adversary with 49% of *re-pointing bandwidth*" — without it, the adversary matches every honest switch instantly and the race never resolves. safety is unaffected by the switching rule: $\tau_D$ stalls both particles during the race exactly as before, so nothing finalizes prematurely.
+
+## design requirement + theorem T2: spectral gap
+
+the [[spectral gap]] $\lambda_2$ is not a free consequence of honest stake majority — cyberlinks are content assertions, and neurons link what they find semantically related, not what maintains graph connectivity. an unconditional $\lambda_2 \geq \lambda_{\min}$ claim is not just hard to prove, it is false in benign cases: two knowledge domains can be genuinely, honestly disjoint. define $G_{\text{sem}}$, the semantic graph — the ground-truth relatedness structure a truthful market would price — with conductance $\Phi_{\text{sem}}$.
+
+**theorem T2 (conditional).** in any Nash equilibrium of the link-creation game with karma-weighted reward $\propto \Delta\phi^+$, per-link cost $c$, price gate $f(\text{price})\in[0,1]$ ([[reward specification]] §3's $A^{\text{eff}}_{pq}=\sum_\ell \text{stake}(\ell)\kappa(\nu(\ell))f(\text{price}(\ell))$), and market efficiency (ICBS prices a true link above the gate within bounded lag), the realized stake-weighted graph satisfies
+
+$$\lambda_2^* \;\geq\; \min\!\left(\frac{\Phi_{\text{sem}}^2}{2},\; \frac{c_1\gamma_{\text{reward}}}{c}\right)$$
+
+on the multiplicative reversibilization of the (non-reversible, directed) diffusion chain.
+
+**proof sketch.** for a cut of conductance $\Phi$, standard Markov-chain perturbation theory gives the marginal $\phi^*$-response to a unit of cross-cut edge weight as $\Theta(1/\lambda_2)$ — the slow (bottleneck) direction of the operator amplifies the relaxation response, while an intra-cluster link on an already-saturated region returns only $\Theta(1)$ (§3's submodularity-among-substitutes). so bridging a cut is worth $\Theta(1/\lambda_2)$ more in karma than duplicating a dense cluster, for any $\lambda_2$ below the fixed point of the equilibrium condition — at equilibrium, no agent profits from redirecting one link, so marginal karma is equalized across all *semantically available* placements up to cost $c$. if $\lambda_2 < c_1\gamma_{\text{reward}}/c$, a bridging deviation strictly profits, **provided a true cross-cut link exists to make** — i.e. provided the cut is not itself semantic. contrapositive: at equilibrium, every sub-threshold cut is a semantic cut, giving the bound above. spam is excluded by the price gate: a fabricated bridge has $f(\text{price})\to0$ under efficient pricing, hence $\Delta\phi^+\to0$, hence zero karma — manufacturing conductance does not pay. $\square$
+
+**status: provable-conditional, and the condition is honest — it is a fact about the world (does semantic overlap exist), correctly left outside the protocol's power to guarantee.** two residuals: (a) market lag — during the price gate's catch-up window, the bound holds with $\Phi_{\text{sem}}$ replaced by the *already-priced-in* subgraph's conductance, which is exactly [[reward specification]] §12's discovery leak showing up a second time, in the security layer rather than the reward layer — one underlying bug, two symptoms; (b) the directed-Cheeger step: foculus diffusion is non-reversible, and the reversibilization can change the spectral gap by a factor not bounded here — needs an empirical measurement alongside the existing per-epoch $\lambda_2$ measurement ([[provable-consensus]]).
+
+**what T2 replaces.** the previous draft's design requirement asserted an unconditional bound and called the equilibrium "conjectured." T2 is the actual theorem that requirement was gesturing at — it is conditional because the true statement is conditional, not because the proof is incomplete.
+
+## note: composite honesty equilibrium
+
+a related result, properly scoped to [[tru]] rather than [[foculus]] ([[reward specification]] §14 keeps value-magnitude concerns in tru, finality in foculus) — recorded here only because T2's economic argument leans on rational, *honest* link creation, which is exactly what this result would justify.
+
+**claim.** truthful reporting is a Bayes–Nash equilibrium of the composite payoff $U=\rho(s)\cdot\text{Shapley}_\nu(v^\star)+\lambda_{\text{BTS}}s+\text{yield}(\rho)$ — closing [[reward specification]] §15's explicitly named gap ("the composite mint+fee payoff is assumed, not proven"), given (1) $\rho$ and the slash read the same meta-prediction (§15's own stated requirement), (2) $s_{\max}$ calibrated so scores stay in $\rho$'s linear region, and (3) **own-weight monotonicity**: $\text{Shapley}_\nu(v^\star)$ nondecreasing in $\nu$'s own $\rho$.
+
+**verification finding.** condition (3) is the load-bearing step, and it is not safely dischargeable as stated. [[reward specification]] §4 explicitly documents the general failure mode it needs to rule out: *"a normalized fixed point is not monotone in edge weights"* — stated as the reason $v^\star(N)$ can exceed $\Delta\phi^+(N)$, which is precisely why the conservation clip exists. condition (3)'s proof sketch calls the fixed-point response "monotone in own-edge" parenthetically, without discharging it, and the honest status line even names the same clip as the place the risk lives. given the spec's own documented counterexample class, this is not "one lemma to write carefully" — it is a claim that may be false in general and needs either a restricted domain (e.g. a linear-response / small-perturbation regime near equilibrium) or a genuine counterexample search before it is trusted. **recommendation: track this as a tru-layer open problem, not a closed foculus dependency.**
+
+## theorem S4: domain composition
+
+[[reward specification]] §7 already partitions the epoch's claims into content-defined clusters — connected components of overlapping $\varepsilon$-supports. these are the natural shard unit; sharding by conflict domain rather than arbitrary partition means $K$ is not a free parameter chosen for throughput, it falls out of content structure. the composition math is otherwise as before, corrected:
+
+partition $P$ into $K$ domains. let $f_\times$ = cross-domain edge weight fraction of the *global* graph. per-domain local error, expressed relative to the domain's own volume, is $O(Cf_\times)$ — **not** $O(Cf_\times/K)$: a domain's own volume and its cross-domain boundary weight both scale as $\approx 1/K$ under uniform partition, so the $1/K$ cancels in the ratio. composing $K$ domains' local errors, each weighted by its $\approx1/K$ share of global mass, gives global error $\sum_k(1/K)\cdot Cf_\times/(1-\kappa) = Cf_\times/(1-\kappa)$ — sharding buys throughput, not composition-error reduction, to first order.
+
+iterated composition still contracts geometrically: $\|\phi^*_{(R)}-\phi^*(G)\|_1 \leq \frac{Cf_\times}{1-\kappa}\kappa^R$, so $R = \lceil\log(Cf_\times/((1-\kappa)\varepsilon))/\log(1/\kappa)\rceil$ rounds suffice. with $\kappa=0.74$, $C=2.25$, $f_\times=0.1$: initial error $=2.25\times0.1/0.26=0.865$; for $\varepsilon=0.01$: $R=\lceil\ln(86.5)/\ln(1.351)\rceil=\lceil4.46/0.301\rceil=15$ rounds, each one cross-domain message exchange, $O(K)$ total, independent of $N$.
+
+**safety condition, reconciled with the round count above.** the raw condition $f_\times < \Phi_{\text{uncert,max}}^{(D)}$ (no $/K$) is only the *zero-round* requirement — finalizing boundary-adjacent conflicts *before* any cross-domain composition. it is the wrong condition to check in isolation, since this same section already proves the composition error contracts as $\kappa^R$: the right condition is on *post-composition* error,
+
+$$\frac{C f_\times \kappa^R}{1-\kappa} \;<\; \Phi_{\text{uncert,max}}^{(D)}.$$
+
+solving for $R$ at $f_\times=0.10$, $\kappa=0.74$, $C=2.25$, $\Phi_{\text{uncert,max}}^{(D)}=0.00393$: $R > \ln\bigl(Cf_\times/((1-\kappa)\Phi_{\text{uncert,max}}^{(D)})\bigr)/\ln(1/\kappa) = \ln(220.2)/\ln(1.351) = 5.395/0.301 \approx 17.9$, so $R=18$ rounds. **the actual resolution: a boundary-adjacent conflict must wait 18 cross-domain composition rounds before finalizing, not require $\varepsilon$ retuned to shrink domains.** this is strictly cheaper than the earlier framing (each round is one $O(K)$ message exchange, not a protocol-parameter change) and consistent with the $R=15$ figure above — that figure targeted a generic $\varepsilon=0.01$ composition-accuracy goal; the safety-relevant target is $\Phi_{\text{uncert,max}}^{(D)}=0.00393$, a tighter bound requiring 18 rounds rather than 15. non-boundary conflicts (fully interior to one domain) are unaffected and finalize under L2 alone, with no composition wait. **wall-clock cost of the wait:** at roughly one RTT per round, $18\times\Delta \approx 18\times0.4\text{s} \approx 7\text{s}$ — a concrete, bounded latency tax on boundary-adjacent conflicts specifically, not a planetary-scale number.
+
+**an open question this relabeling surfaces, not yet resolved.** $f_\times$ itself is still an *edge-weight* fraction (structural cross-domain weight in the full graph), left unconverted to a mass-weighted quantity — this document does not re-derive S4 the way L1 was just re-derived. whether $f_\times$ inherits the same adversarial-concentration vulnerability (a high-$\phi^*$ particle positioned adjacent to a domain boundary, disproportionately represented in a small edge-weight fraction) is an open question this section does not settle. treated separately in the open-problems list below rather than folded silently into the fix above.
+
+## theorem S5: liveness
+
+every valid particle $P_i$ with inbound honest stake exceeding $\tau_D\cdot\|W_D\|$ finalizes within two domain-local phases:
+
+$$t_{\text{final}} \;=\; O\!\left(\Delta\log|D| \;+\; \frac{\log(1/\varepsilon)}{\lambda_{\text{local}}(D)} \cdot t_{\text{iter}}(|D|)\right)$$
+
+where $|D| = \operatorname{poly-log}(1/\varepsilon)$ is $N$-independent, and $t_{\text{iter}}(|D|)$ is the wall-clock cost of one SpMV iteration over a domain of size $|D|$ — the term an earlier draft silently set to 1 second with no justification. because $|D|$ is bounded independent of $N$, $t_{\text{iter}}(|D|)$ is a small constant on any modern GPU (single A100: ~50M edges at 40Hz, [[foculus]]) — a domain of a few thousand particles is not a meaningful fraction of that capacity.
+
+| regime | $\kappa_D=\kappa(\lambda_2(D))$ | $t_{\text{final}}$ |
+|---|---|---|
+| hub domain (dense, well-connected) | near $\kappa_{\min}=0.425$ | $1$–$3\text{s}$ — matches [[foculus]]'s empirical figure |
+| bostrom-empirical point | $0.74$ | $\approx 3$–$5\text{s}$ |
+| sparse-fringe domain (worst case, still $N$-free) | near $\kappa_{\max}=0.925$ | tens of seconds — slow, but bounded independent of planetary scale |
+
+the planetary-scale "worst case takes months" result from the un-localized draft is gone: it was an artifact of measuring $\lambda_2$ over the full graph, where a sparse cut's conductance genuinely can scale down with $N$. a domain's own $\lambda_2(D)$ has a floor set by the domain's bounded diameter, not by $N$ — the sparse-fringe row above is slow relative to a hub, but it does not degrade further as the planetary graph grows.
+
+**domain-size tradeoff, unexamined.** $|D|\approx$ a few thousand is asserted as a representative figure, but §7's own definition makes domain size content-dependent — "wide around a hub (slow local mixing), tiny on the sparse fringe." a conflict centered on a major hub could have $|D|$ orders larger than the sparse-fringe case, which *helps* the P2-certification cost (more sources, but each still $O(\log n)$) yet directly *hurts* $t_{\text{iter}}(|D|)$ and $t_{\text{prop}}$ in the table above, which both grow with $|D|$. no bound is given on how large a hub-centered domain can get, and the hub row's $1$–$3\text{s}$ figure implicitly assumes a size in the same range as the sparse-fringe estimate — the two may not actually coincide. this tradeoff curve (domain size vs. mixing rate vs. certification cost) is not derived here.
+
+## security parameter table
+
+| parameter | symbol | condition | concrete value |
+|---|---|---|---|
+| honest stake margin | $\delta_{\text{stake}}$ | $>0$ | 0.05 |
+| teleport probability | $\alpha$ | protocol constant | 0.85 |
+| contraction rate ceiling (proven, unconditional) | $\kappa_{\max}$ | $\leq\lambda_d\alpha+\lambda_s+\lambda_h = 1-\lambda_d(1-\alpha)$, every topology | $0.925$ |
+| contraction rate floor (estimate, hub domains) | $\kappa_{\min}$ | $\approx\lambda_d\alpha$ assuming springs term also small; not derived from $\lambda_2$ alone | $\approx0.425$ |
+| tri-kernel Lipschitz constant | $C$ | full composite, operator-level (not graph-size-dependent) | $2.25$ |
+| domain-local expected gap | $\Delta_{D,\text{expected}}$ | $\alpha\cdot2\delta_{\text{stake}}$ — **expected-gap case only**; worst case ($\Delta_{D,\min}\to0$, honest-split) is T1's problem, not this row's | $0.085$ (of *domain* mass) |
+| max uncertified $\phi^*$-mass | $\Phi_{\text{uncert}}^{(D)}$ | $<(1-\kappa_D)\Delta_D/(C(1+\kappa'))$; P2-certified per source, mass-weighted not edge-weighted | $<0.00393$ at $\kappa_D=0.74$ |
+| required certified $\phi^*$-mass | $1-\Phi_{\text{uncert}}^{(D)}$ | of *domain-local* $\phi^*_D$-mass, $N$-free, binary per source once certified | 99.6% |
+| domain propagation time | $t_{\text{prop}}$ | $O(\Delta\log|D|)$, $N$-free — time to gather enough signals to attempt certification | $\approx3.2\text{s}$ at $|D|\approx$ few thousand |
+| support-switching rate | $q$ | new protocol parameter (T1) | tuned to VDF $T_{\min}$ |
+| honest-split finality | $\mathbb{E}[t_{\text{final}}]$ | T1, requires switching rule | $O(T_{\min}\log(1/\Delta_{\text{noise}})/(q\delta_{\text{stake}}))$ |
+| spectral gap floor | $\lambda_2^*$ | T2, conditional on semantic connectivity | $\geq\min(\Phi_{\text{sem}}^2/2,\ c_1\gamma_{\text{reward}}/c)$ |
+| composition rounds, generic accuracy | $R$ | $\lceil\log(Cf_\times/((1-\kappa)\varepsilon))/\log(1/\kappa)\rceil$ at $\varepsilon=0.01$ | 15 at $f_\times=0.1$ |
+| composition rounds, safety-relevant | $R_{\text{safe}}$ | same formula at $\varepsilon=\Phi_{\text{uncert,max}}^{(D)}=0.00393$ — boundary-adjacent conflicts wait this long | 18 at $f_\times=0.1$ |
+| boundary-conflict wall-clock wait | $R_{\text{safe}}\cdot\Delta$ | one RTT per composition round | $\approx7\text{s}$ at $\Delta=0.4\text{s}$ |
+| cross-domain fraction | $f_\times$ | no per-round bound; absorbed by $R_{\text{safe}}$ rounds of composition, not by shrinking $f_\times$ | $0.1$ (example) |
+
+## what this closes
+
+- **unconditional liveness floor:** the tri-kernel contracts on *every* topology at worst rate $\kappa_{\max}=1-\lambda_d(1-\alpha)=0.925<1$ — $\lambda_2$ modulates speed, never threatens convergence itself. previously implicit in a table row; now the headline fact.
+- **safety at scale (L1, L2), certified not probabilistic — and correctly mass-weighted.** localized to $\varepsilon$-support domains *and* upgraded from gossip-probabilistic (Assumption G, whose concentration slack exceeded the entire safety budget at domain scale) to VEC P2 certified completeness, binary per source. this pass also fixed a real error the certification upgrade introduced: bounding by *edge-weight fraction missing* ($\varepsilon_v^{(D)}$) is false in the worst case (a low-out-degree, high-$\phi^*$ node can be withheld while $\varepsilon_v^{(D)}$ stays tiny) — the correct bound is *uncertified $\phi^*$-mass* ($\Phi_{\text{uncert}}^{(D)}$), which is what P2's per-source binary certification actually measures, and the accounting was verified closed even against an adversary specifically targeting a high-mass particle's inbound edges. **caveat carried into "what remains open":** this closes withholding by *known* sources; a source the neuron has never heard of is a separate, still-open enumeration gap.
+- **the $\kappa$-vs-$\lambda_2$ contradiction:** resolved by evaluating both on the same object ($\kappa_D=\kappa(\lambda_2(D))$), using [[convergence]]'s own composite formula rather than treating $\kappa$ as a free constant.
+- **honest-split timing (T1):** provable given one new protocol rule (support switching, declared economically neutral — zero mint, zero BTS exposure, so finality timing cannot be gamed for reward), with VEC P6's VDF as the mechanism that makes the race winnable — previously the most critical open item, now closed modulo the anti-concentration lemma.
+- **spectral gap (T2):** the conjecture is now a conditional theorem. the condition — semantic connectivity of the content — is correctly outside the protocol's power, and the theorem says so rather than promising more.
+- **domain composition (S4):** the $/K$ error corrected, and the safety condition reconciled with the composition-round machinery in the same section — boundary-adjacent conflicts wait $R_{\text{safe}}=18$ rounds rather than requiring an unachievable zero-round bound or an ad hoc $\varepsilon$ retune.
+- **liveness units (S5):** resolved as a side effect of localization — bounded domain size makes the iteration-cost term tractable instead of silently assumed away.
+
+## what remains open
+
+nine items, each with enough context to pick up independently in [../roadmap/](../roadmap/README.md). summarized here, expanded there:
+
+- the never-announce withholding vector — $\Phi_{\text{uncert}}^{(D)}$ needs a closed source list, not gossip discovery — roadmap/source-set-anchoring.md. the never-emit vector (a correctly enumerated, certified source that simply never publishes) is the honest floor this fix does not touch, and no completeness mechanism can touch it: it verifies "everything this source published," never "everything that should exist."
+- whether S4's $f_\times$ inherits the adversarial-concentration bug L1's edge-weight form had — roadmap/domain-composition-mass-weighting.md
+- the Lipschitz constant $C\leq2.25$ — diffusion's per-node worst case is derived, springs' and heat's are asserted — roadmap/springs-heat-sensitivity.md
+- T1's escape-from-symmetry step — solid drift and threshold-crossing mechanics, but the initial escape from $\Delta_0\approx0$ is argued by analogy to Avalanche-family metastability, not derived — roadmap/honest-split-anti-concentration.md
+- no bound on how large an $\varepsilon$-support domain gets around a hub, which the timing tables assume is bounded — roadmap/hub-domain-size-bound.md
+- the contraction floor $\kappa_{\min}\approx0.425$ is an estimate; only the ceiling $\kappa_{\max}=0.925$ is rigorous — roadmap/kappa-min-derivation.md
+- T2's market-lag residual (the same discovery leak as [[reward specification]] §12, visible a second time in the security layer) and its directed-Cheeger reversibilization factor — roadmap/spectral-gap-residuals.md
+- collusion, and the related composite-honesty-equilibrium lemma that [[reward specification]] §4's own non-monotone-fixed-point admission puts at risk — both unilateral-argument gaps shared with [[tru]] — roadmap/collusion-resistance.md
+
+---
+
+see [[foculus]] for the base protocol these theorems extend. see [[collective focus theorem]] for the contraction properties. see [[convergence]] for the $\kappa(\lambda_2)$ composite formula and Cheeger theory. see [[vec]] for P2 (completeness, used for domain boundary certification) and P6 (the VDF T1 depends on). see [[reward specification]] for the $\varepsilon$-support locality (§2, §7) this document's domains reuse, the price gate and Shapley value T2 depends on, and the honesty equilibrium §15 leaves open. see [[foculus beacon]] for the VDF beacon underlying settlement ordering and T1's switching-rate primitive.
