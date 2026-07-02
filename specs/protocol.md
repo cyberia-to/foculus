@@ -171,24 +171,22 @@ where $\kappa' \in [1,2]$ is the adaptive-threshold multiplier -- notationally d
 | metric | classic BFT | nakamoto | foculus |
 |---|---|---|---|
 | leader | rotating proposer | miner (PoW lottery) | none |
-| finality | 5-60 s | ~60 min | 1-3 s |
+| finality | 5-60 s | ~60 min | 1-3 s (hub domain), tens of s (sparse-fringe domain) -- see below |
 | throughput | 1k-10k tx/s | ~10 tx/s | ~10^9 signals/s per GPU |
 | validator scale | 10^2-10^3 | unbounded | unbounded |
 | fault tolerance | 1/3 stake | 51% hash | 1/2 $\phi^*$ |
 
 each iteration is a sparse matrix-vector multiply -- embarrassingly parallel, no sequential bottleneck. single GPU (A100): ~50M edges at 40 Hz = 2x10^9 edge ops/s. with $K$ shards, throughput scales linearly
 
-latency: compute ~0.2 s, 5-8 iterations, propagation ~0.4 s, worst-case finality ~1.4 s WAN
+latency, clear-split case: compute ~0.2 s, 5-8 iterations, propagation ~0.4 s, finality ~1.4 s WAN for a well-connected (hub) domain -- this is the *typical*, not worst, case. actual worst-case finality is domain-dependent, not a single number: a sparse-fringe $\varepsilon$-support domain's local spectral gap can push this into the tens of seconds ([[foculus security at scale]] theorem S5), and a near-50/50 honest split adds the support-switching race's own resolution time on top (theorem T1, $O(T_{\min}\log(1/\Delta_{\text{noise}})/(q\delta_{\text{stake}}))$) -- both bounded, neither reducible to the single "~1.4s WAN" figure this table used to state unconditionally
 
 ## economics
 
-rewards proportional to the measurable shift in $\phi^*$:
-
-$$\text{reward}(v) \propto \Delta\phi^*(v)$$
-
-validators who add [[cyberlinks]] that meaningfully shift the stationary distribution earn more. this aligns incentives: the network rewards contributions to convergence, not mere participation
+rewards track the measurable shift in $\phi^*$, but not as a raw proportion -- this section previously stated $\text{reward}(v)\propto\Delta\phi^*(v)$, which is the right intuition and the wrong formula. [[reward specification]] defines the actual mechanism: the reward primitive is the *directed* focus impulse $\Delta\phi^+ = [\Delta J]_+$ (downhill movement only, magnitude alone is not paid for, since raising free energy -- adding noise -- must not earn), divided among overlapping contributors by their [[Shapley value]] over the surprise-weighted value $v^\star$, where surprise is [[Bayesian Truth Serum|BTS]]-scored so a copy earns nothing however large its raw $\Delta\phi^+$. validators who add [[cyberlinks]] that meaningfully and *surprisingly* shift the stationary distribution earn more; validators who duplicate consensus earn nothing regardless of stake. this is what "aligns incentives" means precisely -- not participation, not raw movement, but fair-divided, novelty-gated contribution to convergence
 
 damping prevents concentration: $\phi^*_i \leftarrow \phi^*_i \cdot \gamma^t$, $\gamma \in (0,1)$. older or less-endorsed [[particles]] fade. the system forgets noise and retains what matters
+
+see [[reward specification]] for the full mechanism -- the value function, Shapley division, propose/settle split, and settlement mining this summary elides.
 
 ## open questions
 
