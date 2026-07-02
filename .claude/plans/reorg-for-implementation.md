@@ -1,6 +1,10 @@
 # foculus: reorg for implementation
 
-status: phases 0-2 executed and committed. phase 3 (gossip.md, wire-format.md) and phase 4 (rs/ scaffold) remain.
+status: phases 0-2 executed and committed. post-phase-2 audit done. gossip.md (phase 3, half) done. wire-format.md (phase 3, other half) and phase 4 (rs/ scaffold) remain.
+
+audit: found and fixed two staleness issues protocol.md's untouched sections carried from before the phase 1 amendment (the performance table's single "~1.4s WAN worst case" figure, actually only the clear-split hub-domain case; the economics section's reward(v) ∝ Δφ*(v), actually a Shapley division of surprise-weighted Δφ+, not a raw proportional claim) and propagated the τ_heat notation fix into security-at-scale.md and one roadmap file. flagged, did not fix: provable-consensus.md states a different composite-κ formula (max-of-weighted-rates) than security-at-scale.md/protocol.md (weighted-sum) -- predates this reorg, foundational, needs reconciling before implementation.
+
+gossip.md: written. message = signal, no envelope (follows from VEC P5/P6 already being self-certifying/self-ordering). push for new signals, pull for VEC P2 completeness proofs -- different traffic patterns, kept separate. topology should mirror the cybergraph's own domain locality rather than flat random peering, which is also what makes the existing O(Δ log|D|) propagation claim a grounded bound rather than an assumed one. introduces three new undetermined parameters (fanout f, affinity/random peering split, batching threshold), added to parameters.md. eclipse resistance under affinity-based topology explicitly flagged as unanalyzed.
 
 phase 0: done -- reference/ -> specs/, foculus.md -> protocol.md, docs/ -> docs/explanation/, roadmap/ created with 8 files extracted from security-at-scale.md's open-problems section, external cross-reference in soft3 fixed.
 
