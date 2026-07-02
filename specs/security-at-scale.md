@@ -8,7 +8,9 @@ alias: security at scale, foculus security proof, scale security, distributed ph
 
 # foculus security at scale
 
-the [[foculus]] safety and liveness proofs — the [[collective focus theorem]] and the exclusive support argument in [[foculus]] — assume every [[neuron]] computes $\phi^*$ from the same complete graph $G$. this document removes that assumption. the resolving idea, arrived at only after an earlier draft's global-L1 machinery collapsed under its own numbers, is **locality**: bind safety and liveness to the same $\varepsilon$-support domain that [[reward specification]] §7 already uses for settlement, rather than to the full $N \to 10^{15}$-particle graph. everything that failed at planetary scale — an unsatisfiable view-completeness bound, a contraction rate $\kappa$ silently treated as constant while $\lambda_2$ is argued to collapse, a global $\sigma_{\phi^*}$ blind to any single conflict — fails because it was stated about the wrong object. stated about the conflict's own domain, the same arguments go through.
+this is the derivation record for [[foculus]]'s domain-local safety and liveness amendments -- [[foculus]]'s own `specs/protocol.md` states the normative result each theorem here justifies (theorems L1, L2, T1, T2, S4, S5, referenced by name in the protocol spec's finalization, safety, and liveness sections); this document carries the proofs, the worked numbers, and the residuals. read `protocol.md` first for what a builder implements; read this document for why it's correct.
+
+the [[foculus]] safety and liveness proofs — the [[collective focus theorem]] and the exclusive support argument in [[foculus]] — assumed every [[neuron]] computes $\phi^*$ from the same complete graph $G$. this document removes that assumption. the resolving idea, arrived at only after an earlier draft's global-L1 machinery collapsed under its own numbers, is locality: bind safety and liveness to the same $\varepsilon$-support domain that [[reward specification]] §7 already uses for settlement, rather than to the full $N \to 10^{15}$-particle graph. everything that failed at planetary scale — an unsatisfiable view-completeness bound, a contraction rate $\kappa$ silently treated as constant while $\lambda_2$ is argued to collapse, a global $\sigma_{\phi^*}$ blind to any single conflict — fails because it was stated about the wrong object. stated about the conflict's own domain, the same arguments go through.
 
 ## the gap
 
@@ -188,7 +190,7 @@ the planetary-scale "worst case takes months" result from the un-localized draft
 
 ## what remains open
 
-nine items, each with enough context to pick up independently in [../roadmap/](../roadmap/README.md). summarized here, expanded there:
+eight items, each with enough context to pick up independently in [../roadmap/](../roadmap/README.md). summarized here, expanded there:
 
 - the never-announce withholding vector — $\Phi_{\text{uncert}}^{(D)}$ needs a closed source list, not gossip discovery — roadmap/source-set-anchoring.md. the never-emit vector (a correctly enumerated, certified source that simply never publishes) is the honest floor this fix does not touch, and no completeness mechanism can touch it: it verifies "everything this source published," never "everything that should exist."
 - whether S4's $f_\times$ inherits the adversarial-concentration bug L1's edge-weight form had — roadmap/domain-composition-mass-weighting.md

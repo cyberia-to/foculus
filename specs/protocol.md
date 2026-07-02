@@ -15,6 +15,8 @@ leaderless. every [[neuron]] computes $\hat\phi^*$ independently from its local 
 
 foculus operates in partial synchrony: messages arrive within an unknown but finite bound $\Delta$. during asynchronous periods (partitions), no new [[particles]] finalize -- but no conflicting [[particles]] can finalize either, because local $\hat\phi^*$ cannot reach $\tau$ without sufficient global connectivity. safety holds always. liveness resumes when connectivity restores
 
+no neuron ever needs a complete view of $G$. safety and liveness are established relative to a conflict's own $\varepsilon$-support domain $D$ -- the same canonical, content-defined region [[reward specification]] settlement mining already uses -- not the full planetary graph. a neuron finalizes a [[particle]] once it holds [[vec|VEC P2]] completeness proofs covering enough of $D$'s stake-weighted $\phi^*$ mass, never once it has seen some fraction of the whole [[cybergraph]]. this localization is what makes the protocol's guarantees $N$-independent; see [[foculus security at scale]] for the full derivation
+
 ## state
 
 each [[neuron]] maintains:
@@ -92,33 +94,33 @@ the "no ordering" claim, precisely: there is no block proposer, no sequencer, no
 1. gossip -- [[neurons]] broadcast new [[particles]] + [[cyberlinks]]
 2. conflict check -- each [[neuron]] indexes nullifiers and detects conflicts on receipt
 3. exclusive support -- for each conflict group, the [[neuron]] links only to its preferred member
-4. local update -- every ~100 ms, GPU-accelerated sparse-matrix x vector refines $\hat\phi^*$
-5. finalize -- [[particle]] $i$ becomes final when $\hat\phi^*_i > \tau(t)$, where $\tau(t) = \mu_\pi + \kappa\sigma_\pi$, $\kappa \in [1,2]$. nullifiers committed to $N$
-6. prune -- conflicting [[particles]] with $\hat\phi^* \leq \tau$ are discarded
-7. reward -- validator $v$ earns proportional to $\Delta\phi^*$ contributed
+4. support switching -- each round, a [[neuron]] with stake on the locally-losing member of a conflict re-points it to the local leader with probability $q$ per round, rate-limited by [[VEC|VEC P6]]'s VDF to at most one re-point per $T_{\min}$ per source. required, not optional: without this step the protocol has no rule that resolves a near-50/50 honest split, and the conflict stalls indefinitely rather than converging. re-pointing signals are consensus-only -- zero mint, zero BTS exposure, $v_\ell=0$ by protocol rule -- so finality timing cannot be gamed for reward; see [[foculus security at scale]] theorem T1
+5. local update -- every ~100 ms, GPU-accelerated sparse-matrix x vector refines $\hat\phi^*$
+6. finalize -- [[particle]] $i$ becomes final in a [[neuron]]'s view once two conditions hold, both local reads, neither requiring a message: $\hat\phi^*_i > \tau(t)$ within $i$'s $\varepsilon$-support domain $D$, where $\tau(t) = \mu_D + \kappa'\sigma_D$, $\kappa' \in [1,2]$ the adaptive-threshold multiplier -- distinct from $\kappa$, the tri-kernel's own contraction rate, see liveness proof below; and the neuron holds [[vec|VEC P2]] completeness proofs covering enough of $D$'s stake-weighted $\phi^*$ mass that no uncertified source could be hiding enough weight to flip the ranking. nullifiers committed to $N$
+7. prune -- conflicting [[particles]] with $\hat\phi^* \leq \tau$ are discarded
+8. reward -- validator $v$ earns proportional to $\Delta\phi^*$ contributed
 
 ## safety proof: no double finality
 
-theorem: two conflicting [[particles]] cannot both exceed $\tau$
+theorem: two conflicting [[particles]] cannot both exceed $\tau$ in any correct [[neuron]]'s view
 
 assumption: honest [[neurons]] control $\geq \frac{1}{2} + \delta$ of staked [[tokens]]
 
-proof sketch:
+proof sketch, domain-local (the rigorous version -- see [[foculus security at scale]] theorems L1, L2 for the full derivation, including the certified-completeness argument this sketch elides):
 
-1. conflicting [[particles]] $P_a, P_b$ form a conflict group. each [[neuron]] supports exactly one member (exclusive support)
-2. the total $\phi^*$ mass directed to $\{P_a, P_b\}$ equals the total mass of all [[neurons]] that have linked to either. this sum is bounded by a fraction of 1 (since $\sum \phi^*_i = 1$ and other non-conflicting [[particles]] also receive mass)
-3. honest [[neurons]] collectively control $> \frac{1}{2}$ of stake-weighted mass. under first-seen, one member -- say $P_a$ -- receives honest majority support (the member that propagated faster)
-4. the adversary controls $< \frac{1}{2}$ of mass and directs it to $P_b$
-5. $\phi^*_a > \phi^*_b$ because $P_a$ has strictly more weighted inbound links from honest [[neurons]]
-6. the [[tri-kernel]] contraction property ($\kappa < 1$ from [[collective focus theorem]]) amplifies this gap with each iteration -- the slight initial advantage compounds exponentially
-7. $\tau$ is adaptive: as $P_a$ gains mass and $P_b$ loses it, the distribution sharpens. $P_b$ falls further below $\tau$ while $P_a$ approaches it
-8. therefore $P_b$ cannot cross $\tau$ while $P_a$ can. QED
+1. conflicting [[particles]] $P_a, P_b$ form a conflict group inside $\varepsilon$-support domain $D$. each [[neuron]] supports exactly one member (exclusive support)
+2. under exclusive support, the gap $\Delta_D = \phi^*_D(P_a) - \phi^*_D(P_b)$ is a function of how domain-local stake splits between the two members, not of iteration count -- the tri-kernel's contraction property converges $\hat\phi^*_D$ *toward* this gap, it does not enlarge the gap itself. an earlier version of this proof claimed contraction amplifies the initial advantage with each iteration; that claim is wrong, and the correct statement is in step 5 below
+3. honest [[neurons]] collectively control $> \frac{1}{2}$ of $D$'s stake-weighted mass. under first-seen propagation, one member -- say $P_a$ -- receives honest majority support, giving $\Delta_D>0$
+4. a [[neuron]] finalizes only once its uncertified mass within $D$ is below the threshold [[foculus security at scale|security-at-scale]] theorem L2 derives from $\Delta_D$, $\kappa_D$, and $C$ -- below that threshold, no view satisfying the certification condition can see the ranking inverted, which is what makes two [[neurons]] with different partial views unable to disagree on the winner
+5. therefore $P_b$ cannot cross $\tau$ in any certified view while $P_a$ can. QED
 
 double-spend prevention follows directly: a [[token]] transfer is a [[particle]]. two conflicting spends present the same nullifier. only one crosses $\tau$. the winner's nullifier enters $N$. the loser is pruned
 
-### edge case: simultaneous convergence
+### edge case: near-symmetric split
 
-if $\phi^*_a = \phi^*_b$ at any iteration (exact tie), the situation is unstable -- any perturbation breaks symmetry. in practice, different network propagation times ensure the initial split is asymmetric. as a deterministic fallback for the measure-zero exact-tie case: lower $\text{hash}(\text{particle\_data})$ wins. this is computable by every [[neuron]] independently
+if honest support splits close to 50/50 ($\Delta_D \to 0$), the situation does not resolve by contraction -- nothing in steps 1-4 above moves stake once the split is set. this is a missing rule, not a proof gap, and step 4 of the protocol above (support switching) is the fix: losing-side stake re-points at a VDF-rate-limited rate until $\Delta_D$ grows enough to cross the adaptive threshold. the adaptive $\tau$ stalls both particles during this race -- high variance from the near-tie raises $\tau$ for both, so nothing finalizes prematurely -- and [[foculus security at scale]] theorem T1 gives the expected resolution time under the switching rule, with an exponential tail
+
+as a deterministic fallback for the measure-zero exact-tie case ($\phi^*_a = \phi^*_b$ precisely, before any switching): lower $\text{hash}(\text{particle\_data})$ wins. computable by every [[neuron]] independently
 
 ### what honest neurons guarantee vs. what they do not
 
@@ -129,16 +131,18 @@ guaranteed:
 
 not guaranteed:
 - which specific conflicting [[particle]] wins (depends on network propagation -- the adversary has some influence over this via timing)
-- how fast the conflict resolves (depends on spectral gap and degree of honest split)
-- that the "better" particle wins in any semantic sense -- the winner is the one that propagated faster, not the one that is "more correct"
+- that the "better" particle wins in any semantic sense -- the winner is the one that propagated faster or accumulated switching support, not the one that is "more correct"
+
+characterized, not merely bounded:
+- how fast the conflict resolves: for a clear initial split, by the domain-local spectral gap ([[foculus security at scale]] theorem S5); for a near-symmetric split, by the support-switching race ([[foculus security at scale]] theorem T1) -- both are now derived quantities, not open questions
 
 ## liveness proof
 
 ergodicity of the transition matrix $P$ guarantees every valid [[particle]] accumulates $\phi^*$ mass over time
 
-convergence rate depends on the spectral gap $\lambda$ of $P$: expected time to finality is $O(\log(1/\varepsilon)/\lambda)$ iterations. larger spectral gap means faster finality. dense, well-connected [[cybergraphs]] have larger gaps
+the tri-kernel contracts on every topology, unconditionally: worst-case rate $\kappa_{\max} = 1-\lambda_d(1-\alpha) < 1$, where $\lambda_d$ is diffusion's kernel weight and $\alpha$ its teleport probability -- see [[convergence]] for the composite $\kappa(\lambda_2)$ formula. this means the iteration never stalls on any graph; only its speed varies. convergence rate for a specific conflict's domain $D$ depends on $D$'s own local spectral gap $\lambda_2(D)$: expected time to finality is $O(\log(1/\varepsilon)/\lambda_2(D))$ iterations, and because $D$ is content-bounded ([[reward specification]] §7's $\varepsilon$-support), this rate does not degrade as the planetary [[cybergraph]] grows -- see [[foculus security at scale]] theorem S5 for the domain-local liveness bound, which replaces an earlier, unlocalized version whose worst case scaled with planetary $N$
 
-during partitions: $\lambda$ drops for the disconnected subgraph, finality slows or halts. this is the correct behavior -- the system refuses to finalize when it lacks global information
+during partitions: $\lambda_2(D)$ drops for a disconnected domain, finality for particles inside it slows or halts. this is the correct behavior -- the system refuses to finalize when it lacks sufficient local information, not when it lacks global information it never actually needed
 
 ## sybil resistance
 
@@ -146,15 +150,21 @@ $\phi^*$ is weighted by staked [[tokens]], not by node count. creating 1000 [[ne
 
 the cost of attacking $\phi^*$ is the cost of acquiring $> \frac{1}{2}$ of staked [[tokens]] -- same economic security model as proof-of-stake, but the attack surface is the graph topology rather than a voting protocol
 
+## graph connectivity
+
+liveness (above) assumes the [[cybergraph]] has a spectral gap bounded away from zero. this is not a free consequence of honest stake majority: [[cyberlinks]] are content assertions, and a [[neuron]] links what it finds semantically related, not what maintains graph-theoretic connectivity. an adversary without any stake can partition the graph into semantically isolated regions simply by ensuring no content spans them
+
+the honest claim is conditional, not unconditional: wherever genuine semantic overlap exists across a sparse region, karma-weighted reward ($\propto \Delta\phi^+$) makes bridging it pay more than duplicating an already-dense cluster, so rational honest majority closes any such gap in equilibrium. where no genuine overlap exists, a sparse region is not an attack -- it is the graph's true epistemic structure, and no bound should be claimed there. see [[foculus security at scale]] theorem T2 for the equilibrium argument and its residuals (market-lag pricing delay, the directed-Cheeger reversibilization factor)
+
 ## finality
 
 foculus provides deterministic finality: once $\phi^*_i > \tau$, the [[particle]] is final. no rollbacks, no probabilistic confirmation depth
 
 ### adaptive threshold formula
 
-$$\tau(t) = \mu_{\phi^*} + \kappa\sigma_{\phi^*}$$
+$$\tau(t) = \mu_{\phi^*} + \kappa'\sigma_{\phi^*}$$
 
-where $\kappa \in [1,2]$. the threshold adapts to the current distribution. when the network is decisive (low variance), $\tau$ is low and finality is fast. when the network is uncertain (high variance), $\tau$ rises and finality slows -- the system self-regulates
+where $\kappa' \in [1,2]$ is the adaptive-threshold multiplier -- notationally distinct from $\kappa$, the tri-kernel's contraction rate (liveness proof, above), a collision the original draft of this document did not disambiguate. the threshold adapts to the current distribution. when the network is decisive (low variance), $\tau$ is low and finality is fast. when the network is uncertain (high variance), $\tau$ rises and finality slows -- the system self-regulates
 
 ## performance comparison
 
@@ -187,20 +197,21 @@ damping prevents concentration: $\phi^*_i \leftarrow \phi^*_i \cdot \gamma^t$, $
 - what is a conflicting particle: formally defined via nullifier collision and author/epoch equivocation -- a pure function of particle data
 - how conflicts are detected without ordering: monotonic local index on nullifiers, independent of arrival order
 - what data becomes canonical: the [[particle]] that crosses $\tau$ first wins. finalization commits nullifiers to $N$. every [[neuron]] computes the same $\phi^*$ from the same graph, so they agree
+- adversarial honest-split (resolved by [[foculus security at scale]] theorem T1): the protocol was found to have no rule that resolves a near-50/50 honest split at all -- contraction converges toward a fixed point, it does not move stake between two competing ones. the support-switching rule (protocol step 4) closes this, VDF-rate-limited so the adversary's counter-push is bandwidth-bounded, not stake-bounded
+- convergence time under conflict (resolved for the clear-split case by theorem S5, for the near-symmetric case by theorem T1): expected time to finality is now a derived quantity in both regimes, not an open bound
 
 ### open (requires further work)
 
-- adversarial honest-split: the adversary can influence which conflicting [[particle]] propagates first to more honest [[neurons]]. quantifying the adversary's power to steer conflict outcomes under partial synchrony needs formal analysis. the safety proof shows they cannot cause double finality, but they may influence which single outcome occurs
-- convergence time under conflict: when honest [[neurons]] split support ~50/50 (adversarial timing), how many iterations until the gap exceeds $\tau$? bounded by spectral gap and initial asymmetry, but no closed-form bound exists
-- partition recovery: when two halves of the network reconnect, how quickly does $\phi^*$ reconverge? bounded by spectral gap, but practical latency under adversarial partitions is uncharacterized
-- threshold gaming: can an attacker oscillate $\sigma_{\phi^*}$ to manipulate $\tau$? the adaptive threshold needs formal bounds on adversarial variance injection
+- partition recovery: when two halves of the network reconnect, how quickly does $\phi^*$ reconverge? bounded by the domain-local spectral gap, but practical latency under adversarial partitions is uncharacterized
+- threshold gaming: can an attacker oscillate $\sigma_D$ to manipulate the domain-local $\tau_D$? the adaptive threshold needs formal bounds on adversarial variance injection -- not directly addressed by any result in [[foculus security at scale]]
 - pre-finality state reads: before a conflict resolves, applications see ambiguity. the [[particle]] with higher current $\phi^*$ is the best guess, but it may change. specifying a safe API for pre-finality state queries (optimistic vs. pessimistic reads) is needed
 - cross-particle dependencies: if $P_c$ depends on $P_a$'s output, and $P_a$ conflicts with $P_b$, then $P_c$ cannot finalize until $P_a$ does. long dependency chains affect throughput -- quantifying this is open
 - MEV within finality window: if multiple non-conflicting [[particles]] finalize in the same epoch, their relative ordering (by $\phi^*$ value) determines application state. extractable value from link timing needs analysis
-- bootstrapping: a cold network has few [[cyberlinks]] and small spectral gap -- finality may be slow until the [[cybergraph]] reaches sufficient density. minimum viable graph density for target finality latency is uncharacterized
+- bootstrapping: a cold network has few [[cyberlinks]] and small local spectral gap -- finality may be slow until a region of the [[cybergraph]] reaches sufficient density. related to but not resolved by `roadmap/hub-domain-size-bound.md`, which characterizes domain size at the opposite end (already-dense hubs), not the cold-start case
+- eight further items, each independently scoped with a known or partial resolution path: see `roadmap/README.md`
 
 ---
 
 [[consensus]] is computed, not voted
 
-see [[collective focus theorem]] for convergence proofs. see [[tri-kernel]] for the operators. see [[focus flow computation]] for the full protocol specification. see [[cyber/state]] for the world state model. see [[cyber/security]] for the nullifier security proof. see [[foculus beacon]] for the epoch randomness beacon derived from the finalized set
+see [[collective focus theorem]] for convergence proofs. see [[tri-kernel]] for the operators. see [[focus flow computation]] for the full protocol specification. see [[cyber/state]] for the world state model. see [[cyber/security]] for the nullifier security proof. see [[foculus beacon]] for the epoch randomness beacon derived from the finalized set. see [[foculus security at scale]] for the domain-local safety and liveness derivations this document summarizes normatively -- theorems L1, L2, T1, T2, S4, S5 -- and `roadmap/README.md` for what those theorems leave open
