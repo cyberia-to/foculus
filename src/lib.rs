@@ -36,7 +36,10 @@ pub mod node;
 pub mod store;
 pub mod vdisk;
 
+pub mod cli;
 pub mod conflict;
+pub mod finality;
+pub mod focus;
 pub mod fork;
 pub mod reconcile;
 pub mod settlement;
@@ -49,5 +52,7 @@ pub use frames::{
 };
 
 pub use conflict::{conflict_keys, ConflictGroup, ConflictIndex, ConflictKey};
-pub use fork::{ForkChoice, ForkError, MinHash, Serialize};
+pub use finality::{certified, crosses_threshold, finalizes, Domain, Finality};
+pub use focus::Focus;
+pub use fork::{ForkChoice, ForkError, GraphView, LinksView, MinHash, Serialize};
 pub use reconcile::{Reconciler, Resolved};

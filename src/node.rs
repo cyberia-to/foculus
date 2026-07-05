@@ -32,8 +32,13 @@ const MSG_CHUNK_DATA: u8 = 6;
 const MSG_CHUNK_NOT_FOUND: u8 = 7;
 const MSG_REGISTRY: u8 = 8;
 const MSG_REGISTRY_RESPONSE: u8 = 9;
+// Reserved wire opcodes — the delta-sync and heartbeat protocol is specified but
+// not yet wired at the transport layer.
+#[allow(dead_code)]
 const MSG_DELTA_SYNC: u8 = 10;
+#[allow(dead_code)]
 const MSG_HEARTBEAT: u8 = 11;
+#[allow(dead_code)]
 const MSG_HEARTBEAT_ACK: u8 = 12;
 
 /// Registry response: includes Merkle root for completeness verification.
@@ -45,7 +50,7 @@ struct RegistryResponse {
 
 /// Peer liveness state.
 #[derive(Debug)]
-struct PeerHealth {
+pub struct PeerHealth {
     last_seen: u64,
     consecutive_failures: u32,
 }
