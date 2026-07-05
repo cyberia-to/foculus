@@ -84,6 +84,43 @@ impl<F: ForkChoice> Reconciler<F> {
     }
 }
 
+/// A resolved conflict with its finality verdict — the φ* winner plus whether it
+/// finalizes (protocol.md step 6), from one tri-kernel computation.
+#[derive(Clone, Copy)]
+pub struct Finalized {
+    pub key: ConflictKey,
+    pub winner: Particle,
+    pub finality: crate::finality::Finality,
+    pub winner_phi: tru::Fx,
+    pub gap: tru::Fx,
+}
+
+impl Reconciler<crate::focus::Focus> {
+    /// Resolve every indexed conflict by φ* AND report its finality — the
+    /// Focus-only closing of the loop (M3-wire). Each conflict's own φ* both
+    /// picks the winner and decides whether it is final, under `gate`.
+    pub fn finalize_all(
+        &self,
+        gate: crate::focus::FinalityGate,
+    ) -> Result<Vec<Finalized>, ForkError> {
+        let view = LinksView(self.index.all_links());
+        let mut out = Vec::new();
+        for key in self.index.conflicts() {
+            let group = self.index.group(&key).ok_or(ForkError::Empty)?;
+            let members = group.members();
+            let v = self.fork.resolve_and_finalize(&members, &view, gate)?;
+            out.push(Finalized {
+                key,
+                winner: members[v.winner].content_id(),
+                finality: v.finality,
+                winner_phi: v.winner_phi,
+                gap: v.gap,
+            });
+        }
+        Ok(out)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,5 +214,39 @@ mod tests {
             r.observe(&sig(1, 0, 4, 5)),
             Err(ForkError::ConflictUnderSerialize)
         );
+    }
+
+    #[test]
+    fn focus_reconciler_finalizes_conflicts() {
+        // a Focus reconciler observes an equivocation over a hub-dominated graph,
+        // then finalize_all resolves it by φ* and reports the verdict in one pass.
+        use crate::finality::Finality;
+        use crate::focus::{FinalityGate, Focus};
+        use tru::Fx;
+
+        // signals a and b equivocate (neuron 1, step 0); a → hub particle 1,
+        // b → fringe particle 7. plus context making 1 a dominant hub.
+        let a = sig(1, 0, 9, 1);
+        let b = sig(1, 0, 9, 7);
+        let ctx = [
+            sig(2, 0, 2, 1),
+            sig(3, 0, 3, 1),
+            sig(4, 0, 4, 1),
+            sig(5, 0, 5, 1),
+        ];
+
+        let mut r = Reconciler::new(Focus::new());
+        r.observe(&a).unwrap();
+        r.observe(&b).unwrap();
+        for s in &ctx {
+            r.observe(s).ok();
+        }
+
+        let eps = Fx::from_int(1).div(Fx::from_int(1_000_000));
+        let finalized = r.finalize_all(FinalityGate::certified_view(eps)).unwrap();
+        // exactly the one equivocation, resolved to the hub signal, and final
+        assert_eq!(finalized.len(), 1);
+        assert_eq!(finalized[0].winner, a.content_id());
+        assert_eq!(finalized[0].finality, Finality::Final);
     }
 }
