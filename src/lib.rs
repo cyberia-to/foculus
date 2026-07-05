@@ -43,6 +43,7 @@ pub mod focus;
 pub mod fork;
 pub mod reconcile;
 pub mod settlement;
+pub mod switching;
 
 pub use chain::{ChainError, CyberlinkRecord, Signal, SignalChain, SELF_NETWORK};
 pub use vdf::{VdfProof, challenge_from_hash, evaluate as vdf_evaluate, verify as vdf_verify};
@@ -56,3 +57,4 @@ pub use finality::{certified, crosses_threshold, finalizes, Domain, Finality};
 pub use focus::{Focus, FinalityGate, Verdict};
 pub use fork::{ForkChoice, ForkError, GraphView, LinksView, MinHash, Serialize};
 pub use reconcile::{Finalized, Reconciler, Resolved};
+pub use switching::{rounds_to_resolve, Support};
