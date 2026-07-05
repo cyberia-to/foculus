@@ -53,12 +53,51 @@ pub struct Signal {
 impl Signal {
     /// Canonical hash of this signal: hemera over (neuron ‖ step ‖ prev ‖ network).
     /// Binding `network` makes the destination tamper-evident in relay.
+    ///
+    /// This is the *chain-position* hash — it does NOT cover the signal's payload
+    /// (links, delta_pi). Two equivocating signals (same neuron, step, prev,
+    /// network but divergent content) share this hash. Use [`Signal::content_id`]
+    /// to distinguish them.
     pub fn hash(&self) -> Particle {
         let mut buf = [0u8; 104]; // 32 + 8 + 32 + 32
         buf[..32].copy_from_slice(&self.neuron);
         buf[32..40].copy_from_slice(&self.step.to_le_bytes());
         buf[40..72].copy_from_slice(&self.prev);
         buf[72..104].copy_from_slice(&self.network);
+        let h = hemera_hash(&buf);
+        *h.as_bytes().first_chunk::<32>().unwrap_or(&[0u8; 32])
+    }
+
+    /// Full-content identity: hemera over every semantic field in canonical order.
+    ///
+    /// Distinct from [`Signal::hash`] (chain position). `content_id` covers the
+    /// payload — the links and delta_pi — so two equivocating signals that share
+    /// a chain position get *different* content ids. This is the `hash(particle_data)`
+    /// that foculus's fork-choice orders by (protocol.md's measure-zero tiebreak,
+    /// generalized to the `MinHash` strategy). Canonical: same content on any node
+    /// produces the same id, so every node's fork-choice agrees.
+    pub fn content_id(&self) -> Particle {
+        let mut buf = Vec::with_capacity(
+            104 + self.links.len() * 137 + self.delta_pi.len() * 40,
+        );
+        buf.extend_from_slice(&self.neuron);
+        buf.extend_from_slice(&self.network);
+        buf.extend_from_slice(&self.step.to_le_bytes());
+        buf.extend_from_slice(&self.prev);
+        // links in their given order — order is part of the signal's semantics
+        for l in &self.links {
+            buf.extend_from_slice(&l.neuron);
+            buf.extend_from_slice(&l.from);
+            buf.extend_from_slice(&l.to);
+            buf.extend_from_slice(&l.token);
+            buf.extend_from_slice(&l.amount.to_le_bytes());
+            buf.push(l.valence as u8);
+            buf.extend_from_slice(&l.height.to_le_bytes());
+        }
+        for (p, v) in &self.delta_pi {
+            buf.extend_from_slice(p);
+            buf.extend_from_slice(&v.to_le_bytes());
+        }
         let h = hemera_hash(&buf);
         *h.as_bytes().first_chunk::<32>().unwrap_or(&[0u8; 32])
     }
