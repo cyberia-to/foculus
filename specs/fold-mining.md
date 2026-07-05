@@ -14,22 +14,20 @@ fold mining is the second lottery that does this aggregation. every fold step is
 
 ## the settlement estimator — the tru boundary
 
-before the fold aggregates tickets, the tickets must be *drawn*. this is the first lottery, and it sits on a clean architectural seam: **the marginal is a [[tru]] computation; the lottery around it is foculus's.**
+before the fold aggregates tickets, the tickets must be *drawn*. this is the first lottery, and it sits on a clean architectural seam. the seam is drawn by *reasons for change*: what changes when the intelligence layer changes belongs to [[tru]]; what changes when the reward *mechanism* changes belongs here.
 
-tru owns the *magnitude and division* — a pure, deterministic function of the graph. `tru::attribution` exposes:
+tru owns exactly one thing — the **physical magnitude**, `Δφ⁺`, a pure function of the graph. its whole interface to the reward is `tru::impulse(base, batch).directed`: the directed focus shift a set of links produces. that is the value oracle, and it is *all* tru contributes.
 
-- `value(base, S)` — `v★(S) = Δφ⁺(A^eff ∪ ρ·S)`, the surprise-weighted directed focus impulse of a coalition;
-- `marginals(base, contribs, order)` — the per-contributor marginal along one *given* ordering, `v★(prefix ∪ {i}) − v★(prefix)`. the ordering is an input; tru never chooses it.
-
-foculus owns the *lottery* — everything the marginal is drawn *by*, because it needs the epoch [[foculus beacon|beacon]] and leaderless consensus, neither of which tru has. a settlement miner:
+foculus owns the **cooperative game and its solution** — because they are reward policy, not intelligence. the surprise-weighted value `v★(S) = Δφ⁺(A^eff ∪ ρ·S)`, the per-contributor marginal, the exact Shapley division, and the lottery are `foculus::settlement`. changing the fair-division rule (Shapley → Banzhaf → proportional) touches foculus, never tru. a settlement miner:
 
 ```
-π(n)  = ordering(b_E ‖ cluster ‖ n)          # beacon-seeded Fisher–Yates (foculus)
-m(n)  = tru::attribution::marginals(base, contribs, π(n))   # the sample (tru)
+v★(S) = tru::impulse(base, ρ-weighted links of S).directed   # the oracle (tru)
+π(n)  = ordering(b_E ‖ cluster ‖ n)                          # beacon-seeded (foculus)
+m(n)  = marginals(base, contribs, π(n))    # v★(prefix∪{i}) − v★(prefix)  (foculus)
 win   iff  H(b_E ‖ cluster ‖ n ‖ id(ν) ‖ commit(m(n))) < target
 ```
 
-each winning `(n, m(n), σ)` is a ticket; the swarm mean of `m(n)` converges to the exact Shapley division ([[Hoeffding's inequality|Hoeffding]]) that `tru::attribution::shapley_exact` defines by full enumeration. the beacon, the ordering, the win-test, the sampling schedule, and the aggregation below are all foculus; the value and the marginal are all tru; conservation and the mint are [[tok]]. the interface between them is exactly two calls — `value` and `marginals` — and the wire types carrying `(base, contribs, order) → m(n)` are the versioned contract to hold stable.
+each winning `(n, m(n), σ)` is a ticket; the swarm mean of `m(n)` converges by [[Hoeffding's inequality|Hoeffding]] to the exact Shapley division `shapley_exact` defines by full enumeration. the value, the game, the division, the beacon, the ordering, the win-test, and the aggregation below are all foculus; conservation and the mint are [[tok]]. **the entire interface to tru is one call — `impulse`** — with no reward concept (surprise, coalition, Shapley) leaking across it. that single call is the versioned contract to hold stable.
 
 ## the fold step
 
