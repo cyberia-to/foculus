@@ -12,8 +12,10 @@
 //! daemon lives under `node`, behind the `net` feature.
 
 use std::collections::BTreeMap;
+use std::io::{self, IsTerminal};
 
 use anyhow::{bail, Context as _, Result};
+use clap::builder::styling::{AnsiColor, Styles};
 use clap::{Parser, Subcommand};
 
 use tru::{compute_focusing, Context, FocusingGraph, FocusingParams, Fx, Link};
@@ -25,15 +27,78 @@ use crate::fork::{ForkChoice, MinHash, Serialize};
 use crate::reconcile::Reconciler;
 use crate::settlement::{self, Contribution};
 
+// ── color ───────────────────────────────────────────────────────────────
+// ANSI only on a terminal — piped output stays clean, the cyber house style.
+
+fn tty() -> bool {
+    io::stdout().is_terminal()
+}
+
+fn paint(code: &str, s: &str) -> String {
+    if tty() {
+        format!("\x1b[{code}m{s}\x1b[0m")
+    } else {
+        s.to_string()
+    }
+}
+
+fn dim(s: &str) -> String {
+    paint("90", s)
+}
+fn cyan(s: &str) -> String {
+    paint("36", s)
+}
+fn green(s: &str) -> String {
+    paint("32", s)
+}
+fn yellow(s: &str) -> String {
+    paint("33", s)
+}
+fn red(s: &str) -> String {
+    paint("31", s)
+}
+fn bold(s: &str) -> String {
+    paint("1", s)
+}
+
+/// `key value`, key dimmed — the aligned kv row used across the output.
+fn kv(key: &str, val: &str) -> String {
+    format!("{} {}", dim(key), val)
+}
+
+/// clap's own `--help` in the cyber palette: green headers, cyan literals,
+/// dim placeholders.
+const STYLES: Styles = Styles::styled()
+    .header(AnsiColor::Green.on_default().bold())
+    .usage(AnsiColor::Green.on_default().bold())
+    .literal(AnsiColor::Cyan.on_default())
+    .placeholder(AnsiColor::BrightBlack.on_default());
+
+/// Wordmark + tagline — printed only on a terminal, above `--help`.
+fn banner() -> String {
+    if !tty() {
+        return String::new();
+    }
+    format!(
+        "{dot} {name}   {tag}\n{stack}\n{field}\n",
+        dot = green("●"),
+        name = bold("foculus"),
+        tag = paint("37", "consensus by convergence"),
+        stack = dim("    φ* · fork-choice · finality · settlement · sync"),
+        field = dim("    Goldilocks field · p = 2⁶⁴ − 2³² + 1 · fixed-point"),
+    )
+}
+
 #[derive(Parser)]
 #[command(
     name = "foculus",
     about = "consensus by convergence — φ*, fork-choice, finality, settlement, sync",
-    version
+    version,
+    styles = STYLES
 )]
 struct Cli {
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 
 #[derive(Subcommand)]
@@ -116,7 +181,14 @@ enum Command {
 /// Entry point — `fn main` in the bin is a one-liner over this.
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
-    match cli.command {
+    let Some(command) = cli.command else {
+        // bare `foculus` — greet, then show the command list.
+        print!("{}", banner());
+        let mut cmd = <Cli as clap::CommandFactory>::command();
+        cmd.print_help().ok();
+        return Ok(());
+    };
+    match command {
         Command::Focus { links } => cmd_focus(&links),
         Command::Reconcile { strategy, signals } => cmd_reconcile(&strategy, &signals),
         Command::Conflicts { signals } => cmd_conflicts(&signals),
@@ -282,11 +354,27 @@ fn cmd_focus(link_specs: &[String]) -> Result<()> {
     // highest focus first; label as deterministic tiebreak
     rows.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
 
-    println!("φ* over {} particles:", rows.len());
+    println!(
+        "{} {}",
+        green("focus"),
+        dim(&format!("φ* over {} particles", rows.len()))
+    );
+    // a light bar so the distribution is visible at a glance
+    let max = rows.first().map(|(_, p)| p.to_f64()).unwrap_or(1.0).max(1e-9);
     for (label, phi) in &rows {
-        println!("  {:<16} {:.6}", label, phi.to_f64());
+        let f = phi.to_f64();
+        let bar = "▮".repeat(((f / max) * 16.0).round() as usize);
+        println!(
+            "  {}  {}  {}",
+            cyan(&format!("{label:<14}")),
+            yellow(&format!("{f:.6}")),
+            green(&bar)
+        );
     }
-    println!("syntropy J(φ*) = {:.6}", result.syntropy.to_f64());
+    println!(
+        "  {}",
+        kv("syntropy", &yellow(&format!("{:.6}", result.syntropy.to_f64())))
+    );
     Ok(())
 }
 
@@ -306,10 +394,25 @@ fn cmd_reconcile(strategy: &str, signal_specs: &[String]) -> Result<()> {
     }?;
 
     if resolved.is_empty() {
-        println!("no conflicts among {} signals — nothing to resolve", signals.len());
+        println!(
+            "{} {}",
+            green("reconcile"),
+            dim(&format!(
+                "no conflicts among {} signals — nothing to resolve",
+                signals.len()
+            ))
+        );
         return Ok(());
     }
-    println!("resolved {} conflict(s) with strategy `{strategy}`:", resolved.len());
+    println!(
+        "{} {}",
+        green("reconcile"),
+        dim(&format!(
+            "{} conflict(s) · strategy {}",
+            resolved.len(),
+            bold(strategy)
+        ))
+    );
     for r in &resolved {
         // find the winning signal to print its neuron:step
         let who = signals
@@ -317,7 +420,12 @@ fn cmd_reconcile(strategy: &str, signal_specs: &[String]) -> Result<()> {
             .find(|s| s.content_id() == r.winner)
             .map(|s| format!("{}:{}", labels.label(&s.neuron), s.step))
             .unwrap_or_else(|| short_hex(&r.winner));
-        println!("  conflict {} → winner {who}", short_hex(&r.key));
+        println!(
+            "  {} {} {}",
+            dim(&short_hex(&r.key)),
+            dim("→"),
+            green(&format!("✓ {who}"))
+        );
     }
     Ok(())
 }
@@ -348,18 +456,30 @@ fn cmd_conflicts(signal_specs: &[String]) -> Result<()> {
     }
     let conflicts = index.conflicts();
     if conflicts.is_empty() {
-        println!("no conflicts among {} signals", signals.len());
+        println!(
+            "{} {}",
+            green("conflicts"),
+            dim(&format!("none among {} signals", signals.len()))
+        );
         return Ok(());
     }
-    println!("{} conflict group(s):", conflicts.len());
+    println!(
+        "{} {}",
+        green("conflicts"),
+        dim(&format!("{} group(s)", conflicts.len()))
+    );
     for key in &conflicts {
         let group = index.group(key).unwrap();
         let members: Vec<String> = group
             .members()
             .iter()
-            .map(|s| format!("{}:{}", labels.label(&s.neuron), s.step))
+            .map(|s| yellow(&format!("{}:{}", labels.label(&s.neuron), s.step)))
             .collect();
-        println!("  {} : {}", short_hex(key), members.join(" ⟂ "));
+        println!(
+            "  {} {}",
+            dim(&short_hex(key)),
+            members.join(&dim(" ⟂ "))
+        );
     }
     Ok(())
 }
@@ -388,17 +508,31 @@ fn cmd_finality(
     let cert = certified(uncert, gap, kd, c, kp);
     let verdict = finalizes(target, &domain, uncert, gap, kd, c, kp);
 
-    println!("domain: {} particles", domain.len());
-    println!("  μ_D              = {:.6}", domain.mean().to_f64());
-    println!("  var_D            = {:.6}", domain.variance().to_f64());
-    println!("  φ*_target        = {:.6}", target.to_f64());
-    println!("  crosses τ_D      = {}", crosses);
-    println!("  certified (P2)   = {}", cert);
+    let flag = |b: bool| {
+        if b {
+            green("yes")
+        } else {
+            red("no")
+        }
+    };
+    let num = |x: f64| yellow(&format!("{x:.6}"));
+
     println!(
-        "  verdict          = {}",
+        "{} {}",
+        green("finality"),
+        dim(&format!("domain of {} particles", domain.len()))
+    );
+    println!("  {}", kv("μ_D          ", &num(domain.mean().to_f64())));
+    println!("  {}", kv("var_D        ", &num(domain.variance().to_f64())));
+    println!("  {}", kv("φ*_target    ", &num(target.to_f64())));
+    println!("  {}", kv("crosses τ_D  ", &flag(crosses)));
+    println!("  {}", kv("certified P2 ", &flag(cert)));
+    println!(
+        "  {} {}",
+        dim("verdict      "),
         match verdict {
-            Finality::Final => "FINAL",
-            Finality::Pending => "pending",
+            Finality::Final => bold(&green("● FINAL")),
+            Finality::Pending => yellow("○ pending"),
         }
     );
     Ok(())
@@ -432,12 +566,20 @@ fn cmd_settle(base_specs: &[String], contrib_specs: &[String], samples: u64, bea
     let params = FocusingParams::default();
     let shares = settlement::shapley(&base, &contribs, &ctx, &params, samples, &beacon_id);
 
-    println!("settlement over {samples} beacon-seeded samples:");
+    println!(
+        "{} {}",
+        green("settle"),
+        dim(&format!("Shapley lottery · {samples} beacon-seeded samples"))
+    );
     let total: f64 = shares.iter().map(|(_, s)| s.to_f64()).sum();
     for (neuron, share) in &shares {
-        println!("  {:<16} {:.6}", labels.label(neuron), share.to_f64());
+        println!(
+            "  {}  {}",
+            cyan(&format!("{:<14}", labels.label(neuron))),
+            yellow(&format!("{:.6}", share.to_f64()))
+        );
     }
-    println!("Σ shares = {:.6}", total);
+    println!("  {}", kv("Σ shares", &yellow(&format!("{total:.6}"))));
     Ok(())
 }
 
@@ -456,14 +598,33 @@ fn cmd_chain(signal_specs: &[String]) -> Result<()> {
             Ok(()) => ok += 1,
             Err(ChainError::Equivocation) => {
                 equivocations += 1;
-                println!("  equivocation: {}", short_hex(&neuron));
+                println!(
+                    "  {} {} {}",
+                    red("⚠"),
+                    yellow("equivocation"),
+                    dim(&short_hex(&neuron))
+                );
             }
-            Err(e) => println!("  chain error ({}): {e:?}", short_hex(&neuron)),
+            Err(e) => println!(
+                "  {} {} {}",
+                red("✗"),
+                dim(&short_hex(&neuron)),
+                dim(&format!("{e:?}"))
+            ),
         }
     }
+    let equiv_str = if equivocations == 0 {
+        green("0 equivocations")
+    } else {
+        yellow(&format!("{equivocations} equivocation(s)"))
+    };
     println!(
-        "{} chain(s): {ok} appended, {equivocations} equivocation(s)",
-        chains.len()
+        "{} {}",
+        green("chain"),
+        dim(&format!(
+            "{} chain(s) · {ok} appended · ",
+            chains.len()
+        )) + &equiv_str
     );
     Ok(())
 }
