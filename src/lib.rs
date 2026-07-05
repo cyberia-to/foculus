@@ -36,6 +36,7 @@ pub mod node;
 pub mod store;
 pub mod vdisk;
 
+pub mod cli;
 pub mod conflict;
 pub mod finality;
 pub mod focus;

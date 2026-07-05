@@ -14,13 +14,14 @@ description = "Consensus by convergence — VEC substrate (structural sync) plus
 [[bin]]
 name = "foculus"
 path = "src/bin/main.rs"
-required-features = ["net"]
+# no required-features: the consensus CLI (focus, reconcile, finality, settle,
+# chain) builds without net; the `node` daemon subcommand is gated on `net`.
 
 [features]
 default = ["net"]
 # Networked operation: iroh transport, tokio runtime, device discovery.
-# Disable to use sync's protocol primitives (chain, vdf, erasure, das, nmt)
-# without pulling in the iroh dep tree.
+# Disable to use the consensus + protocol primitives (fork-choice, finality,
+# chain, vdf, erasure, das, nmt) without pulling in the iroh dep tree.
 net = ["dep:iroh", "dep:tokio", "dep:tracing-subscriber"]
 
 [dependencies]
