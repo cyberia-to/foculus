@@ -25,11 +25,107 @@
 use tru::{compute_focusing, Context, FocusingGraph, FocusingParams, Fx, Link};
 
 use crate::chain::Signal;
+use crate::finality::{finalizes, Domain, Finality};
 use crate::fork::{ForkChoice, ForkError, GraphView, MinHash};
 
 /// Resolve conflicts by the tri-kernel fixed point φ*.
 pub struct Focus {
     params: FocusingParams,
+}
+
+/// The certification and threshold parameters the finality gate needs beyond
+/// φ* itself (security-at-scale L1/L2).
+#[derive(Clone, Copy)]
+pub struct FinalityGate {
+    /// ε-support cutoff — particles with φ* ≥ ε form the domain.
+    pub epsilon: Fx,
+    /// Φ_uncert — the uncertified φ*-mass in the domain.
+    pub uncert_mass: Fx,
+    /// Domain-local contraction rate κ_D.
+    pub kappa_d: Fx,
+    /// Tri-kernel Lipschitz constant C.
+    pub c: Fx,
+    /// Adaptive-threshold multiplier κ'.
+    pub kappa_prime: Fx,
+}
+
+impl FinalityGate {
+    /// A fully-certified view (Φ_uncert = 0) with the reference constants from
+    /// `specs/parameters.md` (κ_D=0.74, C=2.25, κ'=1.5). The honest first cut:
+    /// real per-source certification tracking is future work; here the gate asks
+    /// "in a fully-certified view, does the winner cross τ_D?"
+    pub fn certified_view(epsilon: Fx) -> Self {
+        let r = |n: i64, d: i64| Fx::from_int(n).div(Fx::from_int(d));
+        Self {
+            epsilon,
+            uncert_mass: Fx::ZERO,
+            kappa_d: r(74, 100),
+            c: r(225, 100),
+            kappa_prime: r(15, 10),
+        }
+    }
+}
+
+/// The outcome of a resolve-and-finalize: the winner and whether it is final,
+/// with the φ* numbers behind the verdict.
+#[derive(Clone, Copy)]
+pub struct Verdict {
+    /// Index into `members` of the winning signal.
+    pub winner: usize,
+    /// Whether the winner finalizes under the gate.
+    pub finality: Finality,
+    /// The winner's representative φ* (max over its link targets).
+    pub winner_phi: Fx,
+    /// Δ_D — the φ*-gap to the runner-up.
+    pub gap: Fx,
+}
+
+/// The φ* a Focus resolution computes: node ids and their focus, enough to score
+/// members, build the ε-support domain, and read a particle's φ*.
+struct FocusMap {
+    node_ids: Vec<[u8; 32]>,
+    focus: Vec<Fx>,
+}
+
+impl FocusMap {
+    /// φ* of a particle, or zero if it is not a node of the graph.
+    fn of(&self, p: &[u8; 32]) -> Fx {
+        self.node_ids
+            .iter()
+            .position(|id| id == p)
+            .map(|i| self.focus[i])
+            .unwrap_or(Fx::ZERO)
+    }
+
+    /// The ε-support domain: particles with φ* ≥ ε.
+    fn domain(&self, epsilon: Fx) -> Domain {
+        let mut ps = Vec::new();
+        let mut fs = Vec::new();
+        for (i, id) in self.node_ids.iter().enumerate() {
+            if self.focus[i] >= epsilon {
+                ps.push(*id);
+                fs.push(self.focus[i]);
+            }
+        }
+        Domain::from_focus(ps, fs)
+    }
+
+    /// A signal's ranking score — total φ* it directs (M2's sum). Relative, used
+    /// only to pick the winner.
+    fn score(&self, sig: &Signal) -> Fx {
+        sig.links.iter().fold(Fx::ZERO, |a, l| a + self.of(&l.to))
+    }
+
+    /// A signal's representative φ* — the max focus among its link targets (the
+    /// particle it most strongly elevates). In individual-particle units, so it
+    /// is comparable to the domain's τ_D. Coincides with `score` for single-link
+    /// signals (the common case).
+    fn representative(&self, sig: &Signal) -> Fx {
+        sig.links
+            .iter()
+            .map(|l| self.of(&l.to))
+            .fold(Fx::ZERO, |a, b| if b > a { b } else { a })
+    }
 }
 
 impl Focus {
@@ -52,6 +148,91 @@ impl Default for Focus {
     }
 }
 
+impl Focus {
+    /// Build the focus graph from the surrounding cyberlinks and compute φ*.
+    /// Returns `None` when there are no links to rank on — φ* over nothing is
+    /// nothing, and callers fall back to the deterministic tiebreak.
+    ///
+    /// (Karma weighting via a non-`none` Context is a named refinement; valence
+    /// is not yet folded into edge sign.)
+    fn focus_map(&self, view: &dyn GraphView) -> Option<FocusMap> {
+        let links: Vec<Link> = view
+            .links()
+            .iter()
+            .map(|l| Link::stake(l.from, l.to, l.amount as u128))
+            .collect();
+        if links.is_empty() {
+            return None;
+        }
+        let ctx = Context::none();
+        let graph = FocusingGraph::build(links, &ctx);
+        let result = compute_focusing(&graph, &self.params);
+        Some(FocusMap {
+            node_ids: graph.node_ids().to_vec(),
+            focus: result.focus,
+        })
+    }
+
+    /// Resolve AND report finality in one φ* computation (M3-wire): the same
+    /// fixed point that picks the winner decides whether the winner is final.
+    /// This is protocol.md step 6 driven by a live conflict's own φ*.
+    pub fn resolve_and_finalize(
+        &self,
+        members: &[Signal],
+        view: &dyn GraphView,
+        gate: FinalityGate,
+    ) -> Result<Verdict, ForkError> {
+        if members.is_empty() {
+            return Err(ForkError::Empty);
+        }
+        let Some(map) = self.focus_map(view) else {
+            // no graph → no φ*; winner by the deterministic tiebreak, finality
+            // undecidable without a distribution to threshold on.
+            let winner = MinHash.resolve(members, view)?;
+            return Ok(Verdict {
+                winner,
+                finality: Finality::Pending,
+                winner_phi: Fx::ZERO,
+                gap: Fx::ZERO,
+            });
+        };
+
+        // rank members by representative φ* (max target), tie by content_id —
+        // total and deterministic; matches resolve() for single-link signals.
+        let mut reps: Vec<(usize, Fx, [u8; 32])> = members
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (i, map.representative(s), s.content_id()))
+            .collect();
+        reps.sort_by(|a, b| b.1.cmp(&a.1).then(a.2.cmp(&b.2)));
+
+        let winner = reps[0].0;
+        let winner_phi = reps[0].1;
+        let runner_up_phi = reps.get(1).map(|r| r.1).unwrap_or(Fx::ZERO);
+        let gap = if winner_phi > runner_up_phi {
+            winner_phi - runner_up_phi
+        } else {
+            Fx::ZERO
+        };
+        let domain = map.domain(gate.epsilon);
+        let finality = finalizes(
+            winner_phi,
+            &domain,
+            gate.uncert_mass,
+            gap,
+            gate.kappa_d,
+            gate.c,
+            gate.kappa_prime,
+        );
+        Ok(Verdict {
+            winner,
+            finality,
+            winner_phi,
+            gap,
+        })
+    }
+}
+
 impl ForkChoice for Focus {
     fn resolve(&self, members: &[Signal], view: &dyn GraphView) -> Result<usize, ForkError> {
         match members.len() {
@@ -59,53 +240,16 @@ impl ForkChoice for Focus {
             1 => return Ok(0),
             _ => {}
         }
-
-        // Build the focus graph from every cyberlink in the surrounding context —
-        // stake-weighted edges. (Karma weighting via a non-`none` Context is a
-        // named refinement; valence is not yet folded into edge sign.)
-        let links: Vec<Link> = view
-            .links()
-            .iter()
-            .map(|l| Link::stake(l.from, l.to, l.amount as u128))
-            .collect();
-
-        // No graph to rank on → the deterministic tiebreak, so the outcome is
-        // still total. (Also the honest degenerate case: φ* over nothing is nothing.)
-        if links.is_empty() {
+        let Some(map) = self.focus_map(view) else {
             return MinHash.resolve(members, view);
-        }
-
-        let ctx = Context::none();
-        let graph = FocusingGraph::build(links, &ctx);
-        let result = compute_focusing(&graph, &self.params);
-        let node_ids = graph.node_ids();
-
-        // φ* of a particle: its entry in the focus vector, or zero if the particle
-        // is not a node of the graph (a link target no edge reached).
-        let focus_of = |p: &[u8; 32]| -> Fx {
-            node_ids
-                .iter()
-                .position(|id| id == p)
-                .map(|i| result.focus[i])
-                .unwrap_or(Fx::ZERO)
         };
 
-        // Score a signal by the total φ* on the targets its links point at — the
-        // attention it directs into the graph.
-        let score = |sig: &Signal| -> Fx {
-            let mut s = Fx::ZERO;
-            for l in &sig.links {
-                s = s + focus_of(&l.to);
-            }
-            s
-        };
-
-        // Highest φ* wins; exact tie → lowest content_id (total, deterministic).
+        // Highest sum-score wins; exact tie → lowest content_id (deterministic).
         let mut best = 0usize;
-        let mut best_score = score(&members[0]);
+        let mut best_score = map.score(&members[0]);
         let mut best_id = members[0].content_id();
         for (i, m) in members.iter().enumerate().skip(1) {
-            let s = score(m);
+            let s = map.score(m);
             let id = m.content_id();
             if s > best_score || (s == best_score && id < best_id) {
                 best = i;
@@ -234,5 +378,83 @@ mod tests {
             Focus::new().resolve(&[], &LinksView(vec![])),
             Err(ForkError::Empty)
         );
+    }
+
+    // ── M3-wire: resolve + finality from one φ* ──────────────────────────
+
+    fn tiny_eps() -> Fx {
+        Fx::from_int(1).div(Fx::from_int(1_000_000))
+    }
+
+    #[test]
+    fn verdict_winner_matches_focus_choice() {
+        // same hub/fringe setup: the hub signal wins the verdict too, and finality
+        // is reported (fully-certified view).
+        let view = LinksView(vec![
+            link(2, 2, 1, 1000),
+            link(3, 3, 1, 1000),
+            link(4, 4, 1, 1000),
+            link(1, 9, 1, 1),
+            link(1, 9, 7, 1),
+        ]);
+        let a = sig_to(1, 0, 1); // hub
+        let b = sig_to(1, 0, 7); // fringe
+        let members = vec![a.clone(), b.clone()];
+        let v = Focus::new()
+            .resolve_and_finalize(&members, &view, FinalityGate::certified_view(tiny_eps()))
+            .unwrap();
+        assert_eq!(members[v.winner].content_id(), a.content_id());
+        // the winner directs more φ* than the runner-up → positive gap
+        assert!(v.gap.to_f64() >= 0.0);
+        assert!(v.winner_phi.to_f64() > 0.0);
+    }
+
+    #[test]
+    fn hub_winner_finalizes_when_it_dominates() {
+        // A sharply peaked φ* (one dominant hub) over a fully-certified view: the
+        // winning particle should clear τ_D and finalize.
+        let view = LinksView(vec![
+            link(2, 2, 1, 100000),
+            link(3, 3, 1, 100000),
+            link(4, 4, 1, 100000),
+            link(5, 5, 1, 100000),
+            link(6, 6, 1, 100000),
+            link(1, 9, 1, 1), // candidate A → the dominant hub
+            link(1, 9, 7, 1), // candidate B → an untouched fringe
+        ]);
+        let members = vec![sig_to(1, 0, 1), sig_to(1, 0, 7)];
+        let v = Focus::new()
+            .resolve_and_finalize(&members, &view, FinalityGate::certified_view(tiny_eps()))
+            .unwrap();
+        assert_eq!(v.finality, Finality::Final, "a dominant hub winner should finalize");
+    }
+
+    #[test]
+    fn uncertified_mass_blocks_finality() {
+        // Same dominant hub, but a view carrying uncertified mass above the L2
+        // bound: the winner is picked but cannot finalize.
+        let view = LinksView(vec![
+            link(2, 2, 1, 100000),
+            link(3, 3, 1, 100000),
+            link(4, 4, 1, 100000),
+            link(1, 9, 1, 1),
+            link(1, 9, 7, 1),
+        ]);
+        let members = vec![sig_to(1, 0, 1), sig_to(1, 0, 7)];
+        let mut gate = FinalityGate::certified_view(tiny_eps());
+        gate.uncert_mass = Fx::from_int(1).div(Fx::from_int(2)); // 0.5 ≫ the ~0.004 bound
+        let v = Focus::new()
+            .resolve_and_finalize(&members, &view, gate)
+            .unwrap();
+        assert_eq!(v.finality, Finality::Pending, "uncertified mass must block finality");
+    }
+
+    #[test]
+    fn verdict_empty_graph_is_pending() {
+        let members = vec![sig_to(1, 0, 1), sig_to(2, 0, 3)];
+        let v = Focus::new()
+            .resolve_and_finalize(&members, &LinksView(vec![]), FinalityGate::certified_view(tiny_eps()))
+            .unwrap();
+        assert_eq!(v.finality, Finality::Pending, "no φ* → cannot finalize");
     }
 }

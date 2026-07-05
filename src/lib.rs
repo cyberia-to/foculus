@@ -53,6 +53,6 @@ pub use frames::{
 
 pub use conflict::{conflict_keys, ConflictGroup, ConflictIndex, ConflictKey};
 pub use finality::{certified, crosses_threshold, finalizes, Domain, Finality};
-pub use focus::Focus;
+pub use focus::{Focus, FinalityGate, Verdict};
 pub use fork::{ForkChoice, ForkError, GraphView, LinksView, MinHash, Serialize};
 pub use reconcile::{Reconciler, Resolved};
