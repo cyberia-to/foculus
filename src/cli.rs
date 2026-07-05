@@ -22,7 +22,7 @@ use tru::{compute_focusing, Context, FocusingGraph, FocusingParams, Fx, Link};
 
 use crate::chain::{CyberlinkRecord, Signal, SELF_NETWORK};
 use crate::finality::{certified, crosses_threshold, finalizes, Domain, Finality};
-use crate::focus::Focus;
+use crate::focus::{FinalityGate, Focus};
 use crate::fork::{ForkChoice, MinHash, Serialize};
 use crate::reconcile::Reconciler;
 use crate::settlement::{self, Contribution};
@@ -126,6 +126,10 @@ enum Command {
         /// A single-link signal `neuron:step:from:to`. Repeatable.
         #[arg(long = "signal", value_name = "NEURON:STEP:FROM:TO", required = true)]
         signals: Vec<String>,
+        /// Also report each winner's finality (φ* strategy only): does it cross
+        /// τ_D in a fully-certified view? (protocol.md step 6, M3-wire)
+        #[arg(long)]
+        finalize: bool,
     },
 
     /// List detected conflicts among signals (detection only, no resolution).
@@ -198,7 +202,11 @@ pub fn run() -> Result<()> {
     };
     match command {
         Command::Focus { links } => cmd_focus(&links),
-        Command::Reconcile { strategy, signals } => cmd_reconcile(&strategy, &signals),
+        Command::Reconcile {
+            strategy,
+            signals,
+            finalize,
+        } => cmd_reconcile(&strategy, &signals, finalize),
         Command::Conflicts { signals } => cmd_conflicts(&signals),
         Command::Finality {
             phi,
@@ -386,12 +394,20 @@ fn cmd_focus(link_specs: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn cmd_reconcile(strategy: &str, signal_specs: &[String]) -> Result<()> {
+fn cmd_reconcile(strategy: &str, signal_specs: &[String], finalize: bool) -> Result<()> {
     let mut labels = Labels::default();
     let signals: Vec<Signal> = signal_specs
         .iter()
         .map(|s| parse_signal(s, &mut labels))
         .collect::<Result<_>>()?;
+
+    // --finalize: φ* resolution AND a finality verdict from the same fixed point.
+    if finalize {
+        if strategy != "focus" {
+            bail!("--finalize needs --strategy focus (only φ* computes finality)");
+        }
+        return reconcile_and_finalize(&signals, &labels);
+    }
 
     // one engine per strategy; the resolved winners come back the same way.
     let resolved = match strategy {
@@ -451,6 +467,53 @@ fn run_reconcile<F: ForkChoice>(
         }
     }
     Ok(out)
+}
+
+/// φ* resolution + finality in one pass: for each conflict, the fixed point that
+/// picks the winner also decides whether it finalizes (fully-certified view).
+fn reconcile_and_finalize(signals: &[Signal], labels: &Labels) -> Result<()> {
+    let mut rec = Reconciler::new(Focus::new());
+    for s in signals {
+        rec.observe(s).ok();
+    }
+    let eps = Fx::from_int(1).div(Fx::from_int(1_000_000));
+    let finalized = rec
+        .finalize_all(FinalityGate::certified_view(eps))
+        .map_err(|e| anyhow::anyhow!("finalize failed: {e:?}"))?;
+
+    if finalized.is_empty() {
+        println!(
+            "{} {}",
+            green("reconcile"),
+            dim(&format!("no conflicts among {} signals", signals.len()))
+        );
+        return Ok(());
+    }
+    println!(
+        "{} {}",
+        green("reconcile"),
+        dim(&format!("{} conflict(s) · strategy {} · finality", finalized.len(), bold("focus")))
+    );
+    for f in &finalized {
+        let who = signals
+            .iter()
+            .find(|s| s.content_id() == f.winner)
+            .map(|s| format!("{}:{}", labels.label(&s.neuron), s.step))
+            .unwrap_or_else(|| short_hex(&f.winner));
+        let verdict = match f.finality {
+            Finality::Final => bold(&green("● FINAL")),
+            Finality::Pending => yellow("○ pending"),
+        };
+        println!(
+            "  {} {} {}   {}  {}",
+            dim(&short_hex(&f.key)),
+            dim("→"),
+            green(&format!("✓ {who}")),
+            verdict,
+            dim(&format!("φ*={:.4} Δ={:.4}", f.winner_phi.to_f64(), f.gap.to_f64())),
+        );
+    }
+    Ok(())
 }
 
 fn cmd_conflicts(signal_specs: &[String]) -> Result<()> {

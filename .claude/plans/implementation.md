@@ -1,5 +1,25 @@
 # foculus implementation plan
 
+status: M1–M4 done, M3-wire done, CLI done. consensus layer went from 0% to substantially implemented (all with tests, zero warnings). remaining: M5 (mostly stale on audit — see below), CLI verdict surfacing, cross-repo Signal unification.
+
+## progress (all committed, green)
+
+- M1 — fork-choice foundation (conflict, fork, reconcile; Serialize/MinHash)
+- M2 — Focus strategy (φ* via tru's tri-kernel)
+- M3 — finality primitives (ε-support domain, sqrt-free adaptive threshold, P2 gate)
+- M3-wire — resolve_and_finalize + Reconciler<Focus>::finalize_all (one φ* → winner + verdict)
+- M4 — support-switching (T1 drift) + epoch beacon (b_E = VDF over finalized set)
+- settlement (parallel) — Shapley lottery, Monte-Carlo ↔ exact
+- CLI — 7 commands, cyber house-style palette + logo
+
+## M5 audit finding (the flagged issues were mostly stale or conflated)
+
+- **kill f64 — already done for what matters.** the whole consensus path (fork-choice, finality, φ*, switching, beacon, settlement) is `tru::Fx` fixed-point end to end — no float. the `store::GSet` "f64 confidence" the hygiene note flagged does not exist; `FileEntry` is LWW by integer `u64` timestamp. remaining `f64` (vdisk rebalancing ratios, `das::confidence` report, byte display) is off the consensus/proof path — the mandate's allowed boundary. corrected the stale note in `soft3/roadmap/component-boundaries.md`.
+- **LWW→CRDT — a non-issue, it was a layer conflation.** `store::GSet` LWW is the *virtual-filesystem* file merge (last-writer-wins is correct for files). the *signal*-consensus merge `vec.md` P1 describes is implemented as conflict-detection + fork-choice (M1/M2), not LWW. two different layers; no divergence to reconcile.
+- **nullifier — DECISION.** double-spend detection needs the nullifier, which lives in bbg's `Signal` (box_moves), not foculus's `Signal`. decision: bbg owns the nullifier double-spend (its structural `InsertError::DoubleSpend`); foculus owns signal-level equivocation + fork-choice. the conflict machinery is generic over `ConflictKey`, so when the two Signal shapes are unified (a cross-repo change, not foculus-unilateral), adding the double-spend key is additive — `conflict_keys` gains one line. until then double-spend is a bbg-boundary concern, not a foculus gap.
+
+## the original map follows
+
 status: M1 in progress. the map from spec (complete, adversarially reviewed) to code (substrate-only today).
 
 ## where we start
