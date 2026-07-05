@@ -37,6 +37,7 @@ pub mod store;
 pub mod vdisk;
 
 pub mod cli;
+pub mod beacon;
 pub mod conflict;
 pub mod finality;
 pub mod focus;
@@ -52,6 +53,7 @@ pub use frames::{
     CyberFrame, RENDER_BIN,
 };
 
+pub use beacon::Beacon;
 pub use conflict::{conflict_keys, ConflictGroup, ConflictIndex, ConflictKey};
 pub use finality::{certified, crosses_threshold, finalizes, Domain, Finality};
 pub use focus::{Focus, FinalityGate, Verdict};
