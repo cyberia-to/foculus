@@ -75,17 +75,25 @@ const STYLES: Styles = Styles::styled()
     .placeholder(AnsiColor::BrightBlack.on_default());
 
 /// Wordmark + tagline — printed only on a terminal, above `--help`.
+const LOGO: &str = "\
+\x1b[31m███████╗ ██████╗  ██████╗██╗   ██╗██╗     ██╗   ██╗███████╗\x1b[0m
+\x1b[33m██╔════╝██╔═══██╗██╔════╝██║   ██║██║     ██║   ██║██╔════╝\x1b[0m
+\x1b[32m█████╗  ██║   ██║██║     ██║   ██║██║     ██║   ██║███████╗\x1b[0m
+\x1b[36m██╔══╝  ██║   ██║██║     ██║   ██║██║     ██║   ██║╚════██║\x1b[0m
+\x1b[34m██║     ╚██████╔╝╚██████╗╚██████╔╝███████╗╚██████╔╝███████║\x1b[0m
+\x1b[35m╚═╝      ╚═════╝  ╚═════╝ ╚═════╝ ╚══════╝ ╚═════╝ ╚══════╝\x1b[0m";
+
 fn banner() -> String {
     if !tty() {
         return String::new();
     }
     format!(
-        "{dot} {name}   {tag}\n{stack}\n{field}\n",
-        dot = green("●"),
-        name = bold("foculus"),
-        tag = paint("37", "consensus by convergence"),
-        stack = dim("    φ* · fork-choice · finality · settlement · sync"),
-        field = dim("    Goldilocks field · p = 2⁶⁴ − 2³² + 1 · fixed-point"),
+        "{LOGO}\n{tag}\n{params}\n",
+        tag = paint("37", "    consensus by convergence"),
+        params = dim(
+            "\n    φ* · fork-choice · finality · settlement · sync\n    \
+             Goldilocks field · p = 2⁶⁴ − 2³² + 1 · fixed-point\n"
+        ),
     )
 }
 
