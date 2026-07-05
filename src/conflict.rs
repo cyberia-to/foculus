@@ -17,13 +17,13 @@
 //! machinery here is generic over the key, so adding those keys later does not
 //! touch this module's structure.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use cyber_hemera::hash as hemera_hash;
 
 use bbg::Particle;
 
-use crate::chain::Signal;
+use crate::chain::{CyberlinkRecord, Signal};
 
 /// A conflict key: two signals sharing one are mutually exclusive. 32 bytes so a
 /// nullifier or a resource-id (both particles) drops in directly once available.
@@ -118,6 +118,24 @@ impl ConflictIndex {
             .filter(|(_, m)| m.len() > 1)
             .map(|(k, _)| *k)
             .collect()
+    }
+
+    /// Every cyberlink across all indexed signals, each distinct signal counted
+    /// once, in a deterministic order — the graph context a φ*-based fork-choice
+    /// ([`crate::fork::GraphView`]) builds its tri-kernel graph from. Signals are
+    /// deduplicated by `content_id` (a signal can sit in more than one conflict
+    /// group once double-spend keys land) so no link is double-weighted.
+    pub fn all_links(&self) -> Vec<CyberlinkRecord> {
+        let mut seen: BTreeSet<Particle> = BTreeSet::new();
+        let mut out = Vec::new();
+        for group in self.groups.values() {
+            for (id, sig) in group {
+                if seen.insert(*id) {
+                    out.extend(sig.links.iter().cloned());
+                }
+            }
+        }
+        out
     }
 }
 

@@ -18,7 +18,7 @@
 
 use crate::chain::Signal;
 use crate::conflict::{ConflictIndex, ConflictKey};
-use crate::fork::{ForkChoice, ForkError};
+use crate::fork::{ForkChoice, ForkError, LinksView};
 
 use bbg::Particle;
 
@@ -68,7 +68,10 @@ impl<F: ForkChoice> Reconciler<F> {
     fn resolve_key(&self, key: &ConflictKey) -> Result<Resolved, ForkError> {
         let group = self.index.group(key).ok_or(ForkError::Empty)?;
         let members = group.members();
-        let idx = self.fork.resolve(&members)?;
+        // the graph context a φ*-based strategy ranks on — every indexed link,
+        // including the candidates' own. trivial strategies ignore it.
+        let view = LinksView(self.index.all_links());
+        let idx = self.fork.resolve(&members, &view)?;
         Ok(Resolved {
             key: *key,
             winner: members[idx].content_id(),

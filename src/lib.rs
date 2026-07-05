@@ -37,6 +37,7 @@ pub mod store;
 pub mod vdisk;
 
 pub mod conflict;
+pub mod focus;
 pub mod fork;
 pub mod reconcile;
 pub mod settlement;
@@ -49,5 +50,6 @@ pub use frames::{
 };
 
 pub use conflict::{conflict_keys, ConflictGroup, ConflictIndex, ConflictKey};
-pub use fork::{ForkChoice, ForkError, MinHash, Serialize};
+pub use focus::Focus;
+pub use fork::{ForkChoice, ForkError, GraphView, LinksView, MinHash, Serialize};
 pub use reconcile::{Reconciler, Resolved};
