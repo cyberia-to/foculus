@@ -839,10 +839,10 @@ mod tests {
             mgr.put_file("uneven", &format!("f_{}", i), &data).unwrap();
         }
 
-        // Rebalance should move chunks from "small" to "large".
-        let migrated = mgr.rebalance("uneven").unwrap();
-        // At least some chunks should move (large has 10x capacity).
-        // The exact count depends on initial distribution.
+        // Rebalance should move chunks from "small" to "large" (large has 10x
+        // capacity). The exact count depends on initial distribution, so the
+        // real assertion is that data survives the move — checked below.
+        let _migrated = mgr.rebalance("uneven").unwrap();
 
         // All files still readable.
         for i in 0..5 {
