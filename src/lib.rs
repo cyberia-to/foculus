@@ -41,6 +41,7 @@ pub mod beacon;
 pub mod conflict;
 pub mod finality;
 pub mod focus;
+pub mod fold_mining;
 pub mod fork;
 pub mod reconcile;
 pub mod settlement;
@@ -54,6 +55,7 @@ pub use frames::{
 };
 
 pub use beacon::Beacon;
+pub use fold_mining::{close, fold_all, k_min, precision_met, Accumulator, Settlement, Ticket};
 pub use conflict::{conflict_keys, ConflictGroup, ConflictIndex, ConflictKey};
 pub use finality::{certified, crosses_threshold, finalizes, Domain, Finality};
 pub use focus::{Focus, FinalityGate, Verdict};
