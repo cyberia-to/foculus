@@ -22,6 +22,7 @@ narrative, not normative:
 - [overview.md](docs/explanation/overview.md) — what is foculus, consensus as equilibrium, finality as point of no return
 - [convergence.md](docs/explanation/convergence.md) — convergence theory: fixed points, contraction, spectral gap, five worked examples
 - [life-of-a-signal.md](docs/explanation/life-of-a-signal.md) — a signal's full lifecycle walked in real time: gossip and tri-kernel convergence to finality (~4s), then the epoch pipeline — beacon, settlement lottery, fold, mint — to a spendable Shapley share (~1-3min); includes who computes the beacon, a tuned-vs-conservative timing table, and three open scheduling tensions
+- [interplanetary.md](docs/explanation/interplanetary.md) — why foculus survives light-minutes where voting protocols cannot: the pond metaphor, four consequences (no round-trip, per-planet domains, partition-safety, information-not-clock finality), an Earth↔Mars signal walk, and the honest scope of the bounded cross-domain latency cost
 
 ## roadmap
 
