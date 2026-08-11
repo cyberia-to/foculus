@@ -162,6 +162,7 @@ mod tests {
             network: SELF_NETWORK,
             links: vec![link(from, to)],
             delta_pi: vec![],
+            box_moves: vec![],
             prev: [0u8; 32],
             step,
             height: 0,

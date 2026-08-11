@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 
 use cyber_hemera::hash as hemera_hash;
 
-use bbg::{Particle, NeuronId};
+use bbg::{NeuronId, Particle};
 
 /// A single cyberlink inside a signal.
 #[derive(Clone)]
@@ -26,6 +26,13 @@ pub struct CyberlinkRecord {
     pub amount: u64,
     pub valence: i8,
     pub height: u64,
+}
+
+/// Private UTXO spend / create (bridged to bbg::BoxMove).
+#[derive(Clone, Debug)]
+pub struct BoxMoveRecord {
+    pub nullifier: Particle,
+    pub commitment: Option<(Particle, u64)>,
 }
 
 /// The sentinel network meaning "the sender's own private network".
@@ -42,6 +49,8 @@ pub struct Signal {
     pub network: Particle,
     pub links: Vec<CyberlinkRecord>,
     pub delta_pi: Vec<(Particle, u64)>,
+    /// Private conviction spends (WP3). Empty for public-balance-only pays.
+    pub box_moves: Vec<BoxMoveRecord>,
     /// Hash of the previous signal in this neuron's chain.
     pub prev: Particle,
     pub step: u64,
@@ -77,9 +86,7 @@ impl Signal {
     /// generalized to the `MinHash` strategy). Canonical: same content on any node
     /// produces the same id, so every node's fork-choice agrees.
     pub fn content_id(&self) -> Particle {
-        let mut buf = Vec::with_capacity(
-            104 + self.links.len() * 137 + self.delta_pi.len() * 40,
-        );
+        let mut buf = Vec::with_capacity(104 + self.links.len() * 137 + self.delta_pi.len() * 40);
         buf.extend_from_slice(&self.neuron);
         buf.extend_from_slice(&self.network);
         buf.extend_from_slice(&self.step.to_le_bytes());
@@ -97,6 +104,17 @@ impl Signal {
         for (p, v) in &self.delta_pi {
             buf.extend_from_slice(p);
             buf.extend_from_slice(&v.to_le_bytes());
+        }
+        for mv in &self.box_moves {
+            buf.extend_from_slice(&mv.nullifier);
+            match mv.commitment {
+                Some((pt, val)) => {
+                    buf.push(1);
+                    buf.extend_from_slice(&pt);
+                    buf.extend_from_slice(&val.to_le_bytes());
+                }
+                None => buf.push(0),
+            }
         }
         let h = hemera_hash(&buf);
         *h.as_bytes().first_chunk::<32>().unwrap_or(&[0u8; 32])
@@ -118,7 +136,9 @@ pub enum ChainError {
 
 impl SignalChain {
     pub fn new() -> Self {
-        Self { entries: BTreeMap::new() }
+        Self {
+            entries: BTreeMap::new(),
+        }
     }
 
     /// Append a signal. Returns `Err` on equivocation, wrong step, or prev mismatch.
@@ -135,7 +155,10 @@ impl SignalChain {
         let expected_prev: Particle = if expected_step == 0 {
             [0u8; 32]
         } else {
-            let last = self.entries.get(&(expected_step - 1)).ok_or(ChainError::PrevMismatch)?;
+            let last = self
+                .entries
+                .get(&(expected_step - 1))
+                .ok_or(ChainError::PrevMismatch)?;
             last.hash()
         };
 
@@ -183,6 +206,7 @@ mod tests {
             network: SELF_NETWORK,
             links: vec![],
             delta_pi: vec![],
+            box_moves: vec![],
             prev,
             step,
             height: 0,
@@ -220,7 +244,10 @@ mod tests {
     fn wrong_step_is_rejected() {
         let mut chain = SignalChain::new();
         let s = signal(neuron(1), 5, [0u8; 32]);
-        assert!(matches!(chain.append(s), Err(ChainError::StepNotSequential)));
+        assert!(matches!(
+            chain.append(s),
+            Err(ChainError::StepNotSequential)
+        ));
     }
 
     #[test]

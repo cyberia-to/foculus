@@ -25,6 +25,8 @@ use crate::finality::{certified, crosses_threshold, finalizes, Domain, Finality}
 use crate::focus::Focus;
 use crate::fork::{ForkChoice, MinHash, Serialize};
 use crate::reconcile::Reconciler;
+use crate::beacon::GENESIS_PREV;
+use crate::rewards::{claim_from_links, settle_epoch, verify_receipt};
 use crate::settlement::{self, Contribution};
 
 // ── color ───────────────────────────────────────────────────────────────
@@ -159,7 +161,7 @@ enum Command {
         c: String,
     },
 
-    /// Run the settlement Shapley lottery (beacon-seeded Monte-Carlo).
+    /// Run epoch settle: claims → ρ → Shapley under beacon → receipt.
     Settle {
         /// A base-graph cyberlink `from:to:amount`. Repeatable.
         #[arg(long = "link", value_name = "FROM:TO:AMOUNT", required = true)]
@@ -170,9 +172,15 @@ enum Command {
         /// Monte-Carlo samples (more = tighter estimate).
         #[arg(long, default_value = "64")]
         samples: u64,
-        /// Epoch beacon label (seeds the orderings).
-        #[arg(long, default_value = "beacon")]
-        beacon: String,
+        /// Epoch index (beacon chain position).
+        #[arg(long, default_value = "1")]
+        epoch: u64,
+        /// Token budget to allocate across positive Shapley shares.
+        #[arg(long, default_value = "1000")]
+        budget: u64,
+        /// Optional fixed beacon label (legacy raw lottery; skips receipt path).
+        #[arg(long)]
+        beacon: Option<String>,
     },
 
     /// Verify a signal chain and report equivocations.
@@ -184,6 +192,10 @@ enum Command {
     /// Device sync daemon — erasure-coded storage over iroh QUIC (`net` feature).
     #[cfg(feature = "net")]
     Node(NodeArgs),
+
+    /// Settle-gossip radio — multi-miner SelfAcc / claims over iroh QUIC.
+    #[cfg(feature = "net")]
+    SettleNet(settle_net::SettleNetArgs),
 }
 
 /// Entry point — `fn main` in the bin is a one-liner over this.
@@ -213,11 +225,15 @@ pub fn run() -> Result<()> {
             base,
             contribs,
             samples,
+            epoch,
+            budget,
             beacon,
-        } => cmd_settle(&base, &contribs, samples, &beacon),
+        } => cmd_settle(&base, &contribs, samples, epoch, budget, beacon.as_deref()),
         Command::Chain { signals } => cmd_chain(&signals),
         #[cfg(feature = "net")]
         Command::Node(args) => node::run(args),
+        #[cfg(feature = "net")]
+        Command::SettleNet(args) => settle_net::run(args),
     }
 }
 
@@ -332,6 +348,7 @@ fn parse_signal(spec: &str, labels: &mut Labels) -> Result<Signal> {
             height: 0,
         }],
         delta_pi: vec![],
+            box_moves: vec![],
         prev: [0u8; 32],
         step,
         height: 0,
@@ -546,15 +563,63 @@ fn cmd_finality(
     Ok(())
 }
 
-fn cmd_settle(base_specs: &[String], contrib_specs: &[String], samples: u64, beacon: &str) -> Result<()> {
+fn cmd_settle(
+    base_specs: &[String],
+    contrib_specs: &[String],
+    samples: u64,
+    epoch: u64,
+    budget: u64,
+    beacon_label: Option<&str>,
+) -> Result<()> {
     let mut labels = Labels::default();
     let mut base = Vec::new();
     for s in base_specs {
         let l = parse_link(s, &mut labels)?;
         base.push(Link::stake(l.from, l.to, l.amount as u128));
     }
-    let mut contribs = Vec::new();
-    for s in contrib_specs {
+    let ctx = Context::none();
+    let params = FocusingParams::default();
+
+    // Legacy path: fixed beacon label → raw Shapley only (no receipt).
+    if let Some(beacon) = beacon_label {
+        let mut contribs = Vec::new();
+        for s in contrib_specs {
+            let parts: Vec<&str> = s.split(':').collect();
+            if parts.len() != 4 {
+                bail!("contrib must be neuron:from:to:amount, got `{s}`");
+            }
+            let neuron = labels.id(parts[0]);
+            let from = labels.id(parts[1]);
+            let to = labels.id(parts[2]);
+            let amount: u64 = parts[3].parse().context("bad amount")?;
+            contribs.push(Contribution {
+                neuron,
+                links: vec![Link::stake(from, to, amount as u128)],
+                surprise: Fx::ONE,
+            });
+        }
+        let beacon_id = labels.id(beacon);
+        let shares = settlement::shapley(&base, &contribs, &ctx, &params, samples, &beacon_id);
+        println!(
+            "{} {}",
+            green("settle"),
+            dim(&format!("raw lottery · {samples} samples · beacon label"))
+        );
+        let total: f64 = shares.iter().map(|(_, s)| s.to_f64()).sum();
+        for (neuron, share) in &shares {
+            println!(
+                "  {}  {}",
+                cyan(&format!("{:<14}", labels.label(neuron))),
+                yellow(&format!("{:.6}", share.to_f64()))
+            );
+        }
+        println!("  {}", kv("Σ shares", &yellow(&format!("{total:.6}"))));
+        return Ok(());
+    }
+
+    // Epoch path: RewardClaim → ρ → beacon → Shapley → SettleReceipt.
+    let mut claims = Vec::new();
+    for (i, s) in contrib_specs.iter().enumerate() {
         let parts: Vec<&str> = s.split(':').collect();
         if parts.len() != 4 {
             bail!("contrib must be neuron:from:to:amount, got `{s}`");
@@ -563,32 +628,63 @@ fn cmd_settle(base_specs: &[String], contrib_specs: &[String], samples: u64, bea
         let from = labels.id(parts[1]);
         let to = labels.id(parts[2]);
         let amount: u64 = parts[3].parse().context("bad amount")?;
-        contribs.push(Contribution {
+        let mut id = [0u8; 32];
+        id[0] = (i as u8).wrapping_add(1);
+        id[1..9].copy_from_slice(&epoch.to_le_bytes());
+        claims.push(claim_from_links(
+            id,
             neuron,
-            links: vec![Link::stake(from, to, amount as u128)],
-            surprise: Fx::ONE,
-        });
+            vec![Link::stake(from, to, amount as u128)],
+            1,
+        ));
     }
-    let beacon_id = labels.id(beacon);
-    let ctx = Context::none();
-    let params = FocusingParams::default();
-    let shares = settlement::shapley(&base, &contribs, &ctx, &params, samples, &beacon_id);
+    let rec = settle_epoch(
+        epoch,
+        &GENESIS_PREV,
+        &base,
+        &claims,
+        &ctx,
+        &params,
+        samples,
+        budget,
+    )
+    .map_err(|e| anyhow::anyhow!("settle_epoch failed: {e:?}"))?;
+    if !verify_receipt(&rec) {
+        bail!("receipt hash self-check failed");
+    }
 
     println!(
         "{} {}",
         green("settle"),
-        dim(&format!("Shapley lottery · {samples} beacon-seeded samples"))
+        dim(&format!(
+            "epoch {epoch} · {samples} samples · budget {budget}"
+        ))
     );
-    let total: f64 = shares.iter().map(|(_, s)| s.to_f64()).sum();
-    for (neuron, share) in &shares {
+    println!("  {}", kv("beacon", &hex32(&rec.beacon)));
+    println!("  {}", kv("claims_root", &hex32(&rec.claims_root)));
+    println!("  {}", kv("receipt", &hex32(&rec.receipt_hash)));
+    println!(
+        "  {}",
+        kv(
+            "Δφ⁺ total",
+            &yellow(&format!("{:.6}", rec.directed_total.to_f64()))
+        )
+    );
+    let paid: u64 = rec.shares.iter().map(|s| s.amount).sum();
+    for s in &rec.shares {
         println!(
-            "  {}  {}",
-            cyan(&format!("{:<14}", labels.label(neuron))),
-            yellow(&format!("{:.6}", share.to_f64()))
+            "  {}  share={}  amount={}",
+            cyan(&format!("{:<14}", labels.label(&s.neuron))),
+            yellow(&format!("{:.6}", s.share.to_f64())),
+            green(&s.amount.to_string())
         );
     }
-    println!("  {}", kv("Σ shares", &yellow(&format!("{total:.6}"))));
+    println!("  {}", kv("Σ mint", &green(&paid.to_string())));
     Ok(())
+}
+
+fn hex32(b: &[u8; 32]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect::<String>()[..16].to_string() + "…"
 }
 
 fn cmd_chain(signal_specs: &[String]) -> Result<()> {
@@ -807,6 +903,242 @@ mod node {
 
 #[cfg(feature = "net")]
 pub use node::NodeArgs;
+
+// ── settle radio daemon ───────────────────────────────────────────────────
+
+#[cfg(feature = "net")]
+mod settle_net {
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    use anyhow::{Context, Result, bail};
+    use clap::{Args, Subcommand};
+    use iroh::{EndpointAddr, EndpointId};
+
+    use crate::beacon::{claims_root, open_beacon, GENESIS_PREV, TEST_OUTER_T};
+    use crate::gossip::SettleMsg;
+    use crate::radio_settle::SettleRadio;
+    use crate::rewards::{
+        claim_from_links, contributions_with_rho, settle_with_peer_accs, share_of, verify_receipt,
+        TicketPolicy,
+    };
+    use crate::tickets::{easy_target, grind_settlement, self_fold};
+    use tru::{Context as TruCtx, FocusingParams, Link};
+
+    #[derive(Args, Debug)]
+    pub struct SettleNetArgs {
+        /// Data directory (secret key + state).
+        #[arg(short, long, default_value = "~/.foculus-settle")]
+        dir: String,
+        /// QUIC bind port.
+        #[arg(short, long, default_value = "4210")]
+        port: u16,
+        #[command(subcommand)]
+        cmd: SettleNetCmd,
+    }
+
+    #[derive(Subcommand, Debug)]
+    enum SettleNetCmd {
+        /// Print this node's endpoint id + addr ticket and listen.
+        Listen {
+            /// Hex topic (64 chars).
+            #[arg(long)]
+            topic: Option<String>,
+        },
+        /// Multi-miner demo: grind SelfAcc, publish over radio, collect + settle.
+        Demo {
+            /// Peer JSON EndpointAddr (repeatable).
+            #[arg(long = "peer")]
+            peers: Vec<String>,
+            /// Wait for this many peer SelfAccs before settle.
+            #[arg(long, default_value = "0")]
+            want: usize,
+            /// Budget to allocate.
+            #[arg(long, default_value = "1000")]
+            budget: u64,
+            /// Seconds to wait for peer accs.
+            #[arg(long, default_value = "5")]
+            timeout: u64,
+        },
+    }
+
+    pub fn run(args: SettleNetArgs) -> Result<()> {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()?;
+        rt.block_on(async move { run_async(args).await })
+    }
+
+    async fn run_async(args: SettleNetArgs) -> Result<()> {
+        let dir = expand_home(&args.dir);
+        std::fs::create_dir_all(&dir)?;
+        let radio = SettleRadio::start(&dir, args.port).await?;
+        println!("settle-radio listening");
+        println!("  id:   {}", radio.id_string());
+        println!("  addr: {}", radio.addr_json());
+        println!(
+            "  alpn: {}",
+            String::from_utf8_lossy(crate::radio_settle::SETTLE_ALPN)
+        );
+
+        match args.cmd {
+            SettleNetCmd::Listen { topic } => {
+                if let Some(t) = topic {
+                    let topic = parse_topic(&t)?;
+                    radio.subscribe(topic).await;
+                    println!("  subscribed topic {}", to_hex(&topic));
+                }
+                println!("running… ctrl-c to stop");
+                tokio::signal::ctrl_c().await?;
+            }
+            SettleNetCmd::Demo {
+                peers,
+                want,
+                budget,
+                timeout,
+            } => {
+                for p in &peers {
+                    radio.add_peer_addr(parse_peer(p)?).await;
+                }
+                run_demo(&radio, want, budget, Duration::from_secs(timeout)).await?;
+            }
+        }
+        radio.shutdown().await.ok();
+        Ok(())
+    }
+
+    async fn run_demo(
+        radio: &SettleRadio,
+        want: usize,
+        budget: u64,
+        timeout: Duration,
+    ) -> Result<()> {
+        fn h(b: u8) -> [u8; 32] {
+            let mut x = [0u8; 32];
+            x[0] = b;
+            x
+        }
+        let claims = vec![claim_from_links(
+            h(0xA1),
+            h(10),
+            vec![Link::stake(h(2), h(1), 8000)],
+            1,
+        )];
+        let ids: Vec<_> = claims.iter().map(|c| c.id).collect();
+        let topic = claims_root(&ids);
+        radio.subscribe(topic).await;
+        println!("topic {}", to_hex(&topic));
+
+        let base = vec![
+            Link::stake(h(1), h(2), 100),
+            Link::stake(h(2), h(3), 100),
+            Link::stake(h(3), h(1), 100),
+        ];
+        let art = open_beacon(1, &GENESIS_PREV, &topic, &[], TEST_OUTER_T);
+        let contribs = contributions_with_rho(&claims);
+        let miner = h(0x91);
+        let tickets = grind_settlement(
+            &base,
+            &contribs,
+            &TruCtx::none(),
+            &FocusingParams::default(),
+            &art.beacon,
+            &topic,
+            &miner,
+            0,
+            64,
+            4,
+            easy_target(),
+        );
+        let acc = self_fold(contribs.len(), &tickets);
+        let sent = radio
+            .publish(SettleMsg::SelfAcc {
+                topic,
+                miner,
+                acc: acc.clone(),
+            })
+            .await?;
+        println!("published SelfAcc k={} to {sent} peer(s)", acc.k);
+
+        let mut leaves = radio.wait_self_accs(&topic, want, timeout).await;
+        println!("collected {} peer SelfAcc(s)", leaves.len());
+        leaves.push(acc);
+
+        let rec = settle_with_peer_accs(
+            1,
+            &GENESIS_PREV,
+            &base,
+            &claims,
+            &TruCtx::none(),
+            &FocusingParams::default(),
+            budget,
+            &TicketPolicy {
+                want: 4,
+                max_attempts: 64,
+                miner,
+                ..TicketPolicy::default()
+            },
+            &leaves,
+        )
+        .map_err(|e| anyhow::anyhow!("settle_with_peer_accs: {e:?}"))?;
+        if !verify_receipt(&rec) {
+            bail!("receipt verify failed");
+        }
+        println!("receipt {}", to_hex(&rec.receipt_hash));
+        for s in &rec.shares {
+            println!(
+                "  neuron {}… amount {}",
+                to_hex(&s.neuron[..4]),
+                s.amount
+            );
+        }
+        println!("share local={}", share_of(&rec, &h(10)));
+        Ok(())
+    }
+
+    fn expand_home(s: &str) -> PathBuf {
+        if let Some(rest) = s.strip_prefix("~/") {
+            if let Ok(home) = std::env::var("HOME") {
+                return PathBuf::from(home).join(rest);
+            }
+        }
+        PathBuf::from(s)
+    }
+
+    fn parse_topic(s: &str) -> Result<[u8; 32]> {
+        let bytes = from_hex(s.trim()).context("topic hex")?;
+        let arr: [u8; 32] = bytes
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("topic must be 32 bytes hex"))?;
+        Ok(arr)
+    }
+
+    fn parse_peer(s: &str) -> Result<EndpointAddr> {
+        if let Ok(addr) = serde_json::from_str::<EndpointAddr>(s) {
+            return Ok(addr);
+        }
+        let id: EndpointId = s
+            .parse()
+            .map_err(|e| anyhow::anyhow!("peer id/addr: {e}"))?;
+        Ok(EndpointAddr::new(id))
+    }
+
+    fn to_hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    fn from_hex(s: &str) -> Result<Vec<u8>> {
+        if s.len() % 2 != 0 {
+            bail!("odd hex length");
+        }
+        (0..s.len())
+            .step_by(2)
+            .map(|i| {
+                u8::from_str_radix(&s[i..i + 2], 16).map_err(|e| anyhow::anyhow!(e.to_string()))
+            })
+            .collect()
+    }
+}
 
 #[cfg(test)]
 mod tests {

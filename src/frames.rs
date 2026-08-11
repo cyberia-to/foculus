@@ -23,9 +23,9 @@
 //! them and route to chain/erasure as appropriate.
 
 use bbg::IntentRecord;
-use tape::{sigil, Chunk, ReadResult, Reader};
+use tape::{Chunk, ReadResult, Reader, sigil};
 
-use crate::{CyberlinkRecord, Signal, SELF_NETWORK};
+use crate::{CyberlinkRecord, SELF_NETWORK, Signal};
 
 /// Type-tagged identifier for the renderer field; cyber sync uses 'b'
 /// (binary / bincode payload) across all frame kinds.
@@ -145,6 +145,19 @@ fn serialize_signal(s: &Signal) -> Vec<u8> {
         buf.push(l.valence as u8);
         buf.extend_from_slice(&l.height.to_le_bytes());
     }
+    // trailing box_moves (backward compatible: old frames have no trailing bytes)
+    buf.extend_from_slice(&(s.box_moves.len() as u32).to_le_bytes());
+    for mv in &s.box_moves {
+        buf.extend_from_slice(&mv.nullifier);
+        match mv.commitment {
+            Some((pt, val)) => {
+                buf.push(1);
+                buf.extend_from_slice(&pt);
+                buf.extend_from_slice(&val.to_le_bytes());
+            }
+            None => buf.push(0),
+        }
+    }
     buf
 }
 
@@ -169,11 +182,29 @@ fn deserialize_signal(buf: &[u8]) -> Option<Signal> {
             height: take_u64(buf, &mut p)?,
         });
     }
+    let mut box_moves = Vec::new();
+    if p < buf.len() {
+        let count = take_u32(buf, &mut p)? as usize;
+        for _ in 0..count {
+            let nullifier = take32(buf, &mut p)?;
+            let flag = take_u8(buf, &mut p)?;
+            let commitment = if flag == 1 {
+                Some((take32(buf, &mut p)?, take_u64(buf, &mut p)?))
+            } else {
+                None
+            };
+            box_moves.push(crate::BoxMoveRecord {
+                nullifier,
+                commitment,
+            });
+        }
+    }
     Some(Signal {
         neuron,
         network: SELF_NETWORK,
         links,
         delta_pi: vec![],
+        box_moves,
         prev,
         step,
         height,
@@ -220,7 +251,12 @@ fn deserialize_intent(buf: &[u8]) -> Option<IntentRecord> {
     let h0 = take_u64(buf, &mut p)?;
     let scope_hash = take32(buf, &mut p)?;
     let signature: [u8; 64] = buf.get(p..p + 64)?.try_into().ok()?;
-    Some(IntentRecord { neuron, h0, scope_hash, signature })
+    Some(IntentRecord {
+        neuron,
+        h0,
+        scope_hash,
+        signature,
+    })
 }
 
 #[cfg(test)]
@@ -234,6 +270,7 @@ mod tests {
             network: crate::SELF_NETWORK,
             links: vec![],
             delta_pi: vec![],
+            box_moves: vec![],
             prev: [0u8; 32],
             step: 0,
             height: 0,
@@ -270,8 +307,8 @@ mod tests {
     fn signal_payload_length_matches_serialization() {
         let s = empty_signal();
         let payload = serialize_signal(&s);
-        // 32 (neuron) + 8 (step) + 32 (prev) + 8 (height) + 4 (link_count)
-        assert_eq!(payload.len(), 32 + 8 + 32 + 8 + 4);
+        // 32 (neuron) + 8 (step) + 32 (prev) + 8 (height) + 4 (link_count) + 4 (box_moves count)
+        assert_eq!(payload.len(), 32 + 8 + 32 + 8 + 4 + 4);
     }
 
     #[test]

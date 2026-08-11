@@ -127,6 +127,7 @@ mod tests {
                 height: 0,
             }],
             delta_pi: vec![],
+            box_moves: vec![],
             prev: [0u8; 32],
             step,
             height: 0,

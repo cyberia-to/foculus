@@ -22,7 +22,7 @@
 //! they bite: karma-weighting the graph ([`tru::Context`] is `none` here) and the
 //! spec's recompute-φ*-per-candidate ideal (this scores one shared φ* instead).
 
-use tru::{compute_focusing, Context, FocusingGraph, FocusingParams, Fx, Link};
+use tru::{Context, FocusingGraph, FocusingParams, Fx, Link, compute_focusing};
 
 use crate::chain::Signal;
 use crate::fork::{ForkChoice, ForkError, GraphView, MinHash};
@@ -120,7 +120,7 @@ impl ForkChoice for Focus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chain::{CyberlinkRecord, Signal, SELF_NETWORK};
+    use crate::chain::{CyberlinkRecord, SELF_NETWORK, Signal};
     use crate::fork::LinksView;
 
     fn p(b: u8) -> [u8; 32] {
@@ -146,6 +146,7 @@ mod tests {
             network: SELF_NETWORK,
             links: vec![link(neuron, 9, to, 1)],
             delta_pi: vec![],
+            box_moves: vec![],
             prev: p(0),
             step,
             height: 0,
@@ -192,6 +193,7 @@ mod tests {
             network: SELF_NETWORK,
             links: vec![],
             delta_pi: vec![],
+            box_moves: vec![],
             prev: p(0),
             step: 0,
             height: 0,
@@ -202,6 +204,7 @@ mod tests {
             network: SELF_NETWORK,
             links: vec![],
             delta_pi: vec![(p(5), 1)],
+            box_moves: vec![],
             prev: p(0),
             step: 0,
             height: 0,
