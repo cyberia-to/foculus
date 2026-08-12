@@ -32,7 +32,7 @@ zheng = { path = "../zheng/rs" }
 lens = { package = "cyber-lens", path = "../lens/src" }
 tape = { path = "../tape/impl/rust" }
 tru = { path = "../tru/rs" }   # attribution: value / marginals (the settlement estimator draws against these)
-tok = { path = "../tok/rs" }   # conservation clip + settle mint (PLUMB)
+tok = { path = "../plumb/rs" }   # conservation clip + settle mint (PLUMB); repo renamed tok → plumb
 iroh = { path = "../radio/iroh", features = ["address-lookup-mdns"], optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
