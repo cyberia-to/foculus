@@ -28,7 +28,8 @@ lens = { package = "cyb-lens", version = "0.1.1", path = "../lens/src" }
 tape = { package = "cyber-tape", version = "0.1", path = "../tape/impl/rust" }
 tru = { package = "cyber-tru", version = "0.1.1", path = "../tru/rs" }
 tok = { package = "cyber-tok", version = "0.1.1", path = "../tok/rs" }
-iroh = { version = "0.96", optional = true }
+# mdns is feature-gated in crates.io iroh — required for SettleRadio / SyncNode
+iroh = { version = "0.96", optional = true, features = ["address-lookup-mdns"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"], optional = true }
