@@ -2,6 +2,7 @@
 
 consensus by convergence. a [[particle]] is final when $\phi^*_i > \tau$
 
+[[superintelligence]] at planetary scale is Type I. [[interplanetary superintelligence]] is Type II: one mind across light-minutes. voting committees pay round-trips; foculus pays only propagation. the interplanetary case is the high bar — see [interplanetary.md](docs/explanation/interplanetary.md)
 ## specs
 
 implementable, normative — what a builder implements against:
