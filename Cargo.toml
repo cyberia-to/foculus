@@ -2,7 +2,7 @@
 
 [package]
 name = "foculus"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "Consensus by convergence — VEC substrate plus pluggable fork-choice"
 license-file = "LICENSE"
@@ -24,7 +24,7 @@ nebu = { package = "strata-nebu", version = "0.1", path = "../strata/nebu/rs" }
 cyber-hemera = { version = "0.3", path = "../hemera/rs" }
 bbg = { version = "0.1.1", path = "../bbg/rs" }
 zheng = { version = "0.1.1", path = "../zheng/rs" }
-lens = { package = "cyb-lens", version = "0.1.1", path = "../lens/src" }
+lens = { package = "cyber-lens", version = "0.1.1", path = "../lens/src" }
 tape = { package = "cyber-tape", version = "0.1", path = "../tape/impl/rust" }
 tru = { package = "cyber-tru", version = "0.1.1", path = "../tru/rs" }
 tok = { package = "cyber-tok", version = "0.1.1", path = "../tok/rs" }
