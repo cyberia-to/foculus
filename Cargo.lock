@@ -577,7 +577,7 @@ version = "0.3.0"
 
 [[package]]
 name = "cyber-lens"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "cyber-lens-assayer",
  "cyber-lens-binius",
