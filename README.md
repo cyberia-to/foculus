@@ -16,6 +16,12 @@ implementable, normative — what a builder implements against:
 - [fold-mining.md](specs/fold-mining.md) — second lottery: HyperNova fold tree aggregates settlement tickets into one O(1) accumulator per cluster; closes settlement liveness
 - [security-at-scale.md](specs/security-at-scale.md) — the derivation record for `protocol.md`'s amendments: safety and liveness at $N \to 10^{15}$, localized to reward specification's ε-support domains (L1, L2), the support-switching rule and its proof (T1), the spectral gap as a conditional theorem (T2), corrected domain/shard composition (S4) and liveness (S5)
 
+## proposals
+
+not yet normative — designs offered for review, one file each:
+
+- [view-certificates.md](proposals/view-certificates.md) — certified finality: view binding, stake attestation fold, VDF challenge window with an epoch-fixed threshold. finality as evidence, not declaration — the quorum certificate without the committee
+
 ## docs/explanation
 
 narrative, not normative:
