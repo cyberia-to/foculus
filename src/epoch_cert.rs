@@ -78,7 +78,7 @@ pub fn cert_hash(c: &EpochCertificate) -> [u8; 32] {
     }
     if let Some(seal) = &c.ticket_batch_seal {
         buf.extend_from_slice(&seal.steps.to_le_bytes());
-        buf.extend_from_slice(&seal.acc.step_count.to_le_bytes());
+        buf.extend_from_slice(&seal.acc.step_count().to_le_bytes());
     }
     *hemera_hash(&buf)
         .as_bytes()

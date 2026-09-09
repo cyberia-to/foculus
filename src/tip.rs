@@ -7,18 +7,17 @@
 //!
 //! Normative: cyber/specs/light-money.md, money-loop.md.
 //!
-//! Production path: each height folds a CCS step that binds `(height, root)`
+//! Production path: each height folds one add row of the universal step
+//! CCS ([`crate::step`]) whose registers hash `(height, root, leaves)`
 //! into the HyperNova accumulator; light clients `decide` + verify once at
-//! join, then fold-advance on each tip update.
+//! join, then fold-advance on each tip update. Binding caveat in
+//! [`crate::step`].
 
 use bbg::{Checkpoint, Particle};
-use cyber_hemera::hash as hemera_hash;
-use lens::brakedown::Brakedown;
-use nebu::Goldilocks;
-use zheng::ccs::{CONST_IDX, Z_LEN, build_step_ccs, reg_t, reg_t1};
-use zheng::spartan::SpartanVerifier;
-use zheng::types::{Accumulator, CCSInstance, CCSWitness, Proof, ProofParams, Statement};
+use zheng::types::{Accumulator, CCSWitness, Proof, ProofParams, Statement};
 use zheng::{Transcript, decide, fold};
+
+use crate::step;
 
 /// How the tip root was established (certainty grade 4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,35 +71,17 @@ impl Tip {
         let Some(acc) = checkpoint.acc.as_ref() else {
             return Self::untrusted_at(checkpoint);
         };
-        if acc.step_count == 0 {
-            return Self {
-                height: checkpoint.height,
-                root: checkpoint.root,
-                folding_acc: Some(acc.clone()),
-                trust: TipTrust::Untrusted,
-                statement: None,
-            };
+        if acc.step_count() == 0 {
+            return Self::untrusted_at(checkpoint);
         }
 
         let statement = statement_for_root(&checkpoint.root, checkpoint.height);
         let params = ProofParams::default();
         let Ok(proof) = decide(acc, &statement, &params) else {
-            return Self {
-                height: checkpoint.height,
-                root: checkpoint.root,
-                folding_acc: Some(acc.clone()),
-                trust: TipTrust::Untrusted,
-                statement: None,
-            };
+            return Self::untrusted_at(checkpoint);
         };
         if !verify_decide(acc, &proof, &statement) {
-            return Self {
-                height: checkpoint.height,
-                root: checkpoint.root,
-                folding_acc: Some(acc.clone()),
-                trust: TipTrust::Untrusted,
-                statement: None,
-            };
+            return Self::untrusted_at(checkpoint);
         }
         Self {
             height: checkpoint.height,
@@ -141,11 +122,10 @@ impl Tip {
         if height < self.height {
             return Err(TipError::HeightRegression);
         }
-        let acc = self.folding_acc.get_or_insert_with(blank_height_acc);
-        let instance = height_ccs();
+        let acc = self.folding_acc.get_or_insert_with(step::blank_acc);
         let witness = block_witness(height, &root, &[0u8; 32]);
         let mut t = Transcript::new();
-        fold(acc, &instance, &witness, &mut t).map_err(|_| TipError::FoldFailed)?;
+        fold(acc, step::instance(), &witness, &mut t).map_err(|_| TipError::FoldFailed)?;
         self.height = height;
         self.root = root;
         self.statement = Some(statement_for_root(&root, height));
@@ -155,7 +135,7 @@ impl Tip {
     /// Re-run decide on the current acc (audit / epoch seal).
     pub fn redecide(&mut self) -> Result<Proof, TipError> {
         let acc = self.folding_acc.as_ref().ok_or(TipError::NoAccumulator)?;
-        if acc.step_count == 0 {
+        if acc.step_count() == 0 {
             return Err(TipError::EmptyAccumulator);
         }
         let statement = statement_for_root(&self.root, self.height);
@@ -190,25 +170,7 @@ pub enum TipError {
     VerifyFailed,
 }
 
-// ── height-binding CCS (production fold step) ─────────────────────────────
-
-/// Same add-pattern CCS used as a height step: constraints stay stable so
-/// sequential folds share one group. Witness encodes height + root material.
-fn height_ccs() -> CCSInstance {
-    build_step_ccs(5)
-}
-
-fn blank_height_acc() -> Accumulator {
-    let instance = height_ccs();
-    let zero = vec![Goldilocks::ZERO; Z_LEN];
-    Accumulator {
-        committed_instance: instance.clone(),
-        folded_witness: CCSWitness { z: zero.clone() },
-        witness_commitment: Brakedown::commit_raw(&zero),
-        error_evals: vec![Goldilocks::ZERO; instance.num_rows],
-        step_count: 0,
-    }
-}
+// ── height-binding step (production fold step) ────────────────────────────
 
 /// Witness for height + root + root_leaves_hash. Each triple folds uniquely.
 fn block_witness(height: u64, root: &Particle, leaves: &Particle) -> CCSWitness {
@@ -216,17 +178,7 @@ fn block_witness(height: u64, root: &Particle, leaves: &Particle) -> CCSWitness 
     buf[..8].copy_from_slice(&height.to_le_bytes());
     buf[8..40].copy_from_slice(root);
     buf[40..72].copy_from_slice(leaves);
-    let h = hemera_hash(&buf);
-    let bytes = h.as_bytes();
-    let a = u64::from_le_bytes(bytes[0..8].try_into().unwrap()) % 1_000_000 + 1;
-    let b = u64::from_le_bytes(bytes[8..16].try_into().unwrap()) % 1_000_000 + 1;
-    let c = a + b;
-    let mut z = vec![Goldilocks::ZERO; Z_LEN];
-    z[CONST_IDX] = Goldilocks::ONE;
-    z[reg_t(3)] = Goldilocks::new(a);
-    z[reg_t(4)] = Goldilocks::new(b);
-    z[reg_t1(5)] = Goldilocks::new(c);
-    CCSWitness { z }
+    step::add_step(&buf)
 }
 
 /// Prover-side tip builder: folds every finalized height for export to light clients.
@@ -240,7 +192,7 @@ pub struct TipProver {
 impl TipProver {
     pub fn new() -> Self {
         Self {
-            acc: blank_height_acc(),
+            acc: step::blank_acc(),
             transcript: Transcript::new(),
             height: 0,
             root: [0u8; 32],
@@ -261,15 +213,14 @@ impl TipProver {
         root: Particle,
         root_leaves_hash: Particle,
     ) -> Result<(), TipError> {
-        if height < self.height && self.acc.step_count > 0 {
+        if height < self.height && self.acc.step_count() > 0 {
             return Err(TipError::HeightRegression);
         }
-        let instance = height_ccs();
         let witness = block_witness(height, &root, &root_leaves_hash);
-        if self.acc.step_count == 0 {
+        if self.acc.step_count() == 0 {
             self.transcript = Transcript::new();
         }
-        fold(&mut self.acc, &instance, &witness, &mut self.transcript)
+        fold(&mut self.acc, step::instance(), &witness, &mut self.transcript)
             .map_err(|_| TipError::FoldFailed)?;
         self.height = height;
         self.root = root;
@@ -309,18 +260,13 @@ fn statement_for_root(root: &Particle, height: u64) -> Statement {
         input_hash: input,
         output_hash: *root,
         focus_bound: 0,
+        // no look rows in the tip fold: the no-state-read sentinel
+        bbg_root: [0u8; 32],
     }
 }
 
 fn verify_decide(acc: &Accumulator, proof: &Proof, statement: &Statement) -> bool {
-    let mut vt = Transcript::new_recursive();
-    vt.absorb_statement(statement);
-    vt.absorb(acc.witness_commitment.as_bytes());
-    for &e in &acc.error_evals {
-        vt.absorb(&e.as_u64().to_le_bytes());
-    }
-    vt.absorb(&acc.step_count.to_le_bytes());
-    SpartanVerifier::verify(&acc.committed_instance, proof, &acc.error_evals, &mut vt).is_ok()
+    step::verify_group(acc, proof, statement)
 }
 
 /// Bootstrap a one-step fold tip (tests / genesis).
@@ -373,7 +319,7 @@ mod tests {
         assert_eq!(tip.trust, TipTrust::FoldDecided);
         assert_eq!(tip.height, 2);
         assert_eq!(tip.root, [3u8; 32]);
-        assert!(tip.folding_acc.as_ref().unwrap().step_count >= 3);
+        assert!(tip.folding_acc.as_ref().unwrap().step_count() >= 3);
     }
 
     #[test]
@@ -394,5 +340,19 @@ mod tests {
         assert!(tip.grade4());
         assert_eq!(tip.root, [9u8; 32]);
         assert_eq!(tip.height, 3);
+    }
+
+    #[test]
+    /// Documents the binding gap, not a guarantee: the statement is derived
+    /// from the checkpoint itself, so decide + verify agree with each other
+    /// whatever root the checkpoint claims. A light client learns only that
+    /// the accumulator was decided under (height, root) — see crate::step.
+    fn join_cannot_detect_a_checkpoint_root_the_fold_never_saw() {
+        let mut prover = TipProver::new();
+        prover.fold_height(4, [5u8; 32]).unwrap();
+        let mut ck = prover.checkpoint();
+        ck.root = [6u8; 32];
+        let tip = Tip::join_checkpoint(&ck);
+        assert_eq!(tip.trust, TipTrust::FoldDecided);
     }
 }
