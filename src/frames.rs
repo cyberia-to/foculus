@@ -158,6 +158,14 @@ fn serialize_signal(s: &Signal) -> Vec<u8> {
             None => buf.push(0),
         }
     }
+    // trailing delta_pi (same tolerance rule: absent in old frames = empty).
+    // The pi ledger rides the SAME log as everything else — a payment that
+    // does not survive replay is not a payment.
+    buf.extend_from_slice(&(s.delta_pi.len() as u32).to_le_bytes());
+    for (to, amount) in &s.delta_pi {
+        buf.extend_from_slice(to);
+        buf.extend_from_slice(&amount.to_le_bytes());
+    }
     buf
 }
 
@@ -199,11 +207,20 @@ fn deserialize_signal(buf: &[u8]) -> Option<Signal> {
             });
         }
     }
+    let mut delta_pi = Vec::new();
+    if p < buf.len() {
+        let count = take_u32(buf, &mut p)? as usize;
+        for _ in 0..count {
+            let to = take32(buf, &mut p)?;
+            let amount = take_u64(buf, &mut p)?;
+            delta_pi.push((to, amount));
+        }
+    }
     Some(Signal {
         neuron,
         network: SELF_NETWORK,
         links,
-        delta_pi: vec![],
+        delta_pi,
         box_moves,
         prev,
         step,
@@ -307,8 +324,9 @@ mod tests {
     fn signal_payload_length_matches_serialization() {
         let s = empty_signal();
         let payload = serialize_signal(&s);
-        // 32 (neuron) + 8 (step) + 32 (prev) + 8 (height) + 4 (link_count) + 4 (box_moves count)
-        assert_eq!(payload.len(), 32 + 8 + 32 + 8 + 4 + 4);
+        // 32 (neuron) + 8 (step) + 32 (prev) + 8 (height) + 4 (link_count)
+        // + 4 (box_moves count) + 4 (delta_pi count)
+        assert_eq!(payload.len(), 32 + 8 + 32 + 8 + 4 + 4 + 4);
     }
 
     #[test]
@@ -352,5 +370,34 @@ mod tests {
         let payload = serialize_intent(&i);
         // 32 + 8 + 32 + 64 = 136
         assert_eq!(payload.len(), 136);
+    }
+}
+
+#[cfg(test)]
+mod delta_pi_frame_tests {
+    use super::*;
+
+    #[test]
+    fn delta_pi_round_trips_and_old_frames_stay_readable() {
+        let mut sig = Signal {
+            neuron: [7u8; 32],
+            network: SELF_NETWORK,
+            links: vec![],
+            delta_pi: vec![([9u8; 32], 40), ([11u8; 32], 2)],
+            box_moves: vec![],
+            prev: [0u8; 32],
+            step: 1,
+            height: 5,
+            proof: None,
+        };
+        let bytes = encode_signal_frame(&sig);
+        let back = decode_signal_frame(&bytes).expect("decode");
+        assert_eq!(back.delta_pi, sig.delta_pi);
+
+        // An old-style frame (no trailing sections) reads as empty.
+        sig.delta_pi.clear();
+        let bytes = encode_signal_frame(&sig);
+        let back = decode_signal_frame(&bytes).expect("decode old-shape");
+        assert!(back.delta_pi.is_empty());
     }
 }

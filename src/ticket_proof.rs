@@ -5,19 +5,17 @@
 // ---
 //! HyperNova σ for settlement tickets and fold steps.
 //!
-//! Same CCS shape as tip fold (`build_step_ccs(5)` add-pattern): each ticket
-//! or fold step is a satisfying witness that binds public material via Hemera
-//! into `a + b = c`. Sequential folds share one group; [`decide`] seals O(1)
-//! SuperSpartan proof. This is real zheng HyperNova — not a hash stub.
+//! Same step shape as the tip fold (one add row of zheng's universal step
+//! CCS, see [`crate::step`]): each ticket or fold step hashes its public
+//! material into a satisfying row. Sequential folds share one accumulator;
+//! [`decide`] seals an O(1) SuperSpartan proof. Binding caveat in
+//! [`crate::step`].
 
 use cyber_hemera::hash as hemera_hash;
-use lens::brakedown::Brakedown;
-use nebu::Goldilocks;
-use zheng::ccs::{build_step_ccs, reg_t, reg_t1, CONST_IDX, Z_LEN};
-use zheng::spartan::SpartanVerifier;
-use zheng::types::{Accumulator, CCSInstance, CCSWitness, Proof, ProofParams, Statement};
-use zheng::{decide, fold, Transcript};
+use zheng::types::{Accumulator, Proof, ProofParams, Statement};
+use zheng::{Transcript, decide, fold};
 
+use crate::step;
 use crate::tickets::{ClusterAcc, SettlementTicket};
 
 const PROGRAM: [u8; 32] = *b"foculus-ticket-fold-v0\0\0\0\0\0\0\0\0\0\0";
@@ -42,7 +40,7 @@ pub struct TicketProver {
 impl TicketProver {
     pub fn new() -> Self {
         Self {
-            acc: blank_acc(),
+            acc: step::blank_acc(),
             transcript: Transcript::new(),
             steps: 0,
         }
@@ -88,12 +86,11 @@ impl TicketProver {
     }
 
     fn fold_material(&mut self, material: &[u8]) -> Result<(), ProofError> {
-        let instance = ticket_ccs();
-        let witness = material_witness(material);
+        let witness = step::add_step(material);
         if self.steps == 0 {
             self.transcript = Transcript::new();
         }
-        fold(&mut self.acc, &instance, &witness, &mut self.transcript)
+        fold(&mut self.acc, step::instance(), &witness, &mut self.transcript)
             .map_err(|_| ProofError::FoldFailed)?;
         self.steps = self.steps.saturating_add(1);
         Ok(())
@@ -132,23 +129,13 @@ impl Default for TicketProver {
 
 /// Verify a sealed fold proof (O(1) SuperSpartan check).
 pub fn verify_seal(acc: &Accumulator, proof: &Proof, statement: &Statement) -> bool {
-    if acc.step_count == 0 {
-        return false;
-    }
-    let mut vt = Transcript::new_recursive();
-    vt.absorb_statement(statement);
-    vt.absorb(acc.witness_commitment.as_bytes());
-    for &e in &acc.error_evals {
-        vt.absorb(&e.as_u64().to_le_bytes());
-    }
-    vt.absorb(&acc.step_count.to_le_bytes());
-    SpartanVerifier::verify(&acc.committed_instance, proof, &acc.error_evals, &mut vt).is_ok()
+    step::verify_group(acc, proof, statement)
 }
 
 /// Verify a [`FoldSeal`] end-to-end.
 pub fn verify_fold_seal(seal: &FoldSeal) -> bool {
     verify_seal(&seal.acc, &seal.proof, &seal.statement)
-        && seal.acc.step_count == seal.steps
+        && seal.acc.step_count() == seal.steps
         && seal.steps > 0
 }
 
@@ -227,37 +214,6 @@ pub enum ProofError {
     Empty,
 }
 
-fn ticket_ccs() -> CCSInstance {
-    build_step_ccs(5)
-}
-
-fn blank_acc() -> Accumulator {
-    let instance = ticket_ccs();
-    let zero = vec![Goldilocks::ZERO; Z_LEN];
-    Accumulator {
-        committed_instance: instance.clone(),
-        folded_witness: CCSWitness { z: zero.clone() },
-        witness_commitment: Brakedown::commit_raw(&zero),
-        error_evals: vec![Goldilocks::ZERO; instance.num_rows],
-        step_count: 0,
-    }
-}
-
-/// Bind arbitrary material into a satisfying a+b=c witness (same as tip).
-fn material_witness(material: &[u8]) -> CCSWitness {
-    let h = hemera_hash(material);
-    let bytes = h.as_bytes();
-    let a = u64::from_le_bytes(bytes[0..8].try_into().unwrap()) % 1_000_000 + 1;
-    let b = u64::from_le_bytes(bytes[8..16].try_into().unwrap()) % 1_000_000 + 1;
-    let c = a + b;
-    let mut z = vec![Goldilocks::ZERO; Z_LEN];
-    z[CONST_IDX] = Goldilocks::ONE;
-    z[reg_t(3)] = Goldilocks::new(a);
-    z[reg_t(4)] = Goldilocks::new(b);
-    z[reg_t1(5)] = Goldilocks::new(c);
-    CCSWitness { z }
-}
-
 fn ticket_statement(beacon: &[u8; 32], cluster: &[u8; 32], k: u64) -> Statement {
     let mut input = [0u8; 32];
     input[..8].copy_from_slice(&k.to_le_bytes());
@@ -273,15 +229,18 @@ fn ticket_statement(beacon: &[u8; 32], cluster: &[u8; 32], k: u64) -> Statement 
         input_hash: input,
         output_hash: output,
         focus_bound: 0,
+        // no look rows in a ticket program: the no-state-read sentinel
+        bbg_root: [0u8; 32],
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tickets::{easy_target, grind_settlement, self_fold};
-    use tru::{Context, FocusingParams, Fx, Link};
     use crate::settlement::Contribution;
+    use crate::tickets::{easy_target, grind_settlement, self_fold};
+    use nebu::Goldilocks;
+    use tru::{Context, FocusingParams, Fx, Link};
 
     fn h(b: u8) -> [u8; 32] {
         let mut x = [0u8; 32];
@@ -372,5 +331,26 @@ mod tests {
         let mut seal = prove_settlement_batch(&beacon, &cluster, &tickets).unwrap();
         seal.proof.eval_value = Goldilocks::new(seal.proof.eval_value.as_u64().wrapping_add(1));
         assert!(!verify_fold_seal(&seal));
+    }
+
+    #[test]
+    fn seal_rejects_foreign_statement() {
+        let (base, contribs, beacon, cluster) = setup();
+        let tickets = grind_settlement(
+            &base,
+            &contribs,
+            &Context::none(),
+            &FocusingParams::default(),
+            &beacon,
+            &cluster,
+            &h(0x91),
+            0,
+            8,
+            2,
+            easy_target(),
+        );
+        let seal = prove_settlement_batch(&beacon, &cluster, &tickets).unwrap();
+        let other = ticket_statement(&h(0xEE), &cluster, tickets.len() as u64);
+        assert!(!verify_seal(&seal.acc, &seal.proof, &other));
     }
 }

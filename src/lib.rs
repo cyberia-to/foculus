@@ -55,6 +55,7 @@ pub mod wire;
 pub mod reconcile;
 pub mod rewards;
 pub mod settlement;
+pub(crate) mod step;
 pub mod ticket_proof;
 pub mod tickets;
 pub mod tip;
