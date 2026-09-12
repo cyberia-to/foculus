@@ -14,8 +14,8 @@
 //!
 //! | particle          | sigil  | render | payload                                |
 //! |-------------------|--------|--------|----------------------------------------|
-//! | signal            | ZAP `!` | b      | bincode-encoded Signal envelope        |
-//! | intent            | KET `^` | b      | bincode-encoded IntentRecord           |
+//! | signal            | ZAP `!` | b      | legacy binary Signal payload           |
+//! | intent            | KET `^` | b      | fixed-width IntentRecord               |
 //! | chunk_request     | WUT `?` | b      | (peer_id, chunk_id) tuple              |
 //! | chunk_response    | HAX `#` | b      | raw chunk bytes + inclusion proof      |
 //!
@@ -27,8 +27,13 @@ use tape::{Chunk, ReadResult, Reader, sigil};
 
 use crate::{CyberlinkRecord, SELF_NETWORK, Signal};
 
+mod strict;
+pub use strict::{
+    MAX_LEGACY_EVENTS, MAX_LEGACY_LOG_BYTES, decode_events_strict, decode_events_strict_with_spans,
+};
+
 /// Type-tagged identifier for the renderer field; cyber sync uses 'b'
-/// (binary / bincode payload) across all frame kinds.
+/// (binary payload) across all frame kinds.
 pub const RENDER_BIN: u8 = b'b';
 
 /// Encode a signal as a cyber-dialect tape frame.
@@ -55,9 +60,9 @@ pub fn encode_intent_frame(intent: &IntentRecord) -> Vec<u8> {
 ///
 /// The wire form omits the network tag (a peer only ships its own network's
 /// signals) and the proof — so a decoded signal carries `network =
-/// SELF_NETWORK`, an empty `delta_pi`, and `proof = None`. That's exactly the
-/// shape [`Cybergraph::link`](../../cybergraph) rebuilds locally, so a gossiped
-/// signal dedups against a locally-applied one via the SignalChain.
+/// SELF_NETWORK` and `proof = None`; historical suffixes may include box moves
+/// and `delta_pi`. Durable import uses [`decode_events_strict`]; full-field
+/// storage uses [`crate::signal_codec`].
 pub fn decode_signal_frame(bytes: &[u8]) -> Option<Signal> {
     let mut reader = Reader::new();
     reader.feed(bytes);
@@ -71,9 +76,8 @@ pub fn decode_signal_frame(bytes: &[u8]) -> Option<Signal> {
 ///
 /// Tape frames are self-delimiting, so a durable log or a gossiped batch is
 /// just frames back-to-back. Non-signal frames (other sigils) are skipped.
-/// Each returned signal feeds straight into
-/// [`Cybergraph::link`](../../cybergraph), which dedups via the SignalChain —
-/// so replaying a log or applying a peer's batch is idempotent.
+/// This compatibility API skips malformed entries. Durable replay must use
+/// [`decode_events_strict`] and retain its legacy profile explicitly.
 pub fn decode_signals(bytes: &[u8]) -> Vec<Signal> {
     let mut reader = Reader::new();
     reader.feed(bytes);

@@ -12,6 +12,7 @@ implementable, normative — what a builder implements against:
 - [gossip.md](specs/gossip.md) — the propagation layer VEC P4 assumes: no message envelope, a signal *is* the gossip message; push for new signals, pull for VEC P2 completeness proofs. topology starts with explicit domain subscription (proven, gossipsub-style, via radio); graph-inferred peer affinity is named as a future direction, not the starting design — see the document's own opening for why
 - [provable-consensus.md](specs/provable-consensus.md) — circuit spec: proving φ* in a [[zheng]] circuit, cost analysis, recursive composition
 - [vec.md](specs/vec.md) — verified eventual consistency: six properties (P1-P6), CRDT safety, NMT completeness, DAS availability
+- [signal-codec.md](specs/signal-codec.md) — bounded complete Signal encoding, authenticated proof identity, and strict legacy log import
 - [beacon.md](specs/beacon.md) — epoch randomness beacon $b_E$: VDF over finalized signals; unpredictable, unbiasable, verifiable, live
 - [fold-mining.md](specs/fold-mining.md) — second lottery: HyperNova fold tree aggregates settlement tickets into one O(1) accumulator per cluster; closes settlement liveness
 - [security-at-scale.md](specs/security-at-scale.md) — the derivation record for `protocol.md`'s amendments: safety and liveness at $N \to 10^{15}$, localized to reward specification's ε-support domains (L1, L2), the support-switching rule and its proof (T1), the spectral gap as a conditional theorem (T2), corrected domain/shard composition (S4) and liveness (S5)
