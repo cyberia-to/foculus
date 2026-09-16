@@ -242,6 +242,7 @@ dependencies = [
  "cyber-hemera",
  "cyber-lens",
  "cyber-nox",
+ "neuron-id",
  "strata-nebu",
  "zheng",
 ]
@@ -655,18 +656,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "cyber-tape"
-version = "0.1.0"
-dependencies = [
- "bytes",
-]
-
-[[package]]
 name = "cyber-tok"
 version = "0.1.1"
 dependencies = [
  "cyber-hemera",
  "cyber-tru",
+ "neuron-id",
 ]
 
 [[package]]
@@ -988,7 +983,6 @@ dependencies = [
  "clap",
  "cyber-hemera",
  "cyber-lens",
- "cyber-tape",
  "cyber-tok",
  "cyber-tru",
  "iroh",
@@ -997,6 +991,7 @@ dependencies = [
  "serde",
  "serde_json",
  "strata-nebu",
+ "tade",
  "tempfile",
  "tokio",
  "tracing-subscriber",
@@ -2228,6 +2223,10 @@ dependencies = [
  "windows-result",
  "wmi",
 ]
+
+[[package]]
+name = "neuron-id"
+version = "0.1.0"
 
 [[package]]
 name = "ntimestamp"
@@ -3539,6 +3538,13 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "tade"
+version = "0.1.0"
+dependencies = [
+ "bytes",
 ]
 
 [[package]]
