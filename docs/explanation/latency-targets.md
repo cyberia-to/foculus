@@ -9,7 +9,7 @@ alias: latency targets, finality latency, money clocks, send receive latency, li
 
 architectural map of time in soft3: which clocks exist, who owns them, what cyb may promise for balance / send / receive / reward-after-link, and how the **light client** (headers + fold) sits inside that scope.
 
-this document is explanation, not a parameters table. normative constants live in [[foculus parameters|parameters.md]]. the single-signal walkthrough with worked numbers lives in [[life of a signal]]. light-client join protocol lives in [[structural sync]] and [[cyber/light|light client]]. this page answers: *which latency is whose problem, what must work for money to be real, and how full node / cell / light client share one certainty model.*
+this document is explanation, not a parameters table. normative constants live in [[foculus parameters|parameters.md]]. the single-signal walkthrough with worked numbers lives in [[life of a signal]]. light-client join protocol lives in [[structural sync]] and [[cyber/light|light client]]. this page answers: *which latency is whose problem, what must work for money to be real, and how full node / partial / light client share one certainty model.*
 
 ---
 
@@ -28,6 +28,13 @@ latency targets for "when is money final / spendable / notifiable" are foculus c
 
 soft3 only. no foreign chain schedule is in scope here.
 
+The mode and clock tables below are required product profiles and latency
+targets. The local `LiveNode` API exercises settlement/tip composition; its
+local acceptance does not establish complete network consensus, availability
+or recursive history verification. A profile must supply the stated evidence
+before the UI assigns its corresponding certainty grade. `partial` names a
+node storing a selected graph slice, not a second subject or signing identity.
+
 ---
 
 ## three node modes (all in scope)
@@ -35,7 +42,7 @@ soft3 only. no foreign chain schedule is in scope here.
 money does not require replaying the whole graph. three modes share the same roots and the same finality rule; they differ in **what they store** and **how they obtain a trusted tip**.
 
 ```
-full node              cell (cyb)                 light client
+full node              partial node (cyb)         light client
 replay / hold          apply my                   headers + fold
 all signals            namespaces                 decide(acc)
 tri-kernel locally     local notes + sigma        openings only
@@ -45,12 +52,12 @@ size: unbounded        size: O(my slice)          size: ~constant
 | mode | tip trust | balance / receive | send |
 |---|---|---|---|
 | full node | own apply of history | local state | prove against local state |
-| cell | apply my namespaces + peer completeness | local notes + openings | prove with local secrets + witnesses |
+| partial | apply my namespaces + peer completeness | local notes + openings | prove with local secrets + witnesses |
 | light client | checkpoint + `decide(folding_acc)` then fold each tip | Lens open against `BBG_root` | prove with local secrets; witnesses from peer openings |
 
 **in scope:** the light client is a first-class path for cyb on thin devices — join via fold, hold tip root, open balances, verify receive, authorize send. it is not a deferred optimization.
 
-**cell vs light:** a production cyb often *is* a cell that *embeds* the light-client tip path (fold + root) while still storing private notes and applying signals that touch the owner. pure light (openings only, no private apply) is the thinnest extreme; pure full node is the fattest. the product scope includes the thin path end-to-end.
+**partial vs light:** a cyb can use a partial node that *embeds* the light-client tip path (fold + root) while still storing private notes and applying signals that touch the owner. pure light (openings only, no private apply) is the thinnest extreme; pure full node is the fattest. the product scope includes the thin path end-to-end.
 
 normative join steps (structural-sync):
 
@@ -78,7 +85,7 @@ when a pay cyberlink / PLUMB Intent is canonical: nullifier committed, outputs s
 - unit of work: one signal (or atomic multi-pay Intent)
 - UX: "sent", "received", "balance spendable for respend"
 - independent of: epoch, Shapley
-- tip context: whoever evaluates A (full node, cell, or light) does so against a **trusted tip root** — light obtains that root via clock C
+- tip context: whoever evaluates A (full node, partial, or light) does so against a **trusted tip root** — light obtains that root via clock C
 
 ### clock B — attribution settlement
 
@@ -98,7 +105,7 @@ when a thin client is sure the tip root continues valid history from genesis (or
 - owner: [[zheng]] folding accumulator + structural-sync light path + foculus headers
 - unit of work: join once (`decide`), then O(1) fold per block
 - UX: "empty disk → trusted tip"; "balance/receive proofs bind to that tip"
-- role in money: **provides the root that openings and finality claims are checked against** on light/cell thin path
+- role in money: **provides the root that openings and finality claims are checked against** on light/partial thin path
 
 clock C is how the light client is *sure the tip is the chain*. clock A is how it is *sure this pay is final at that tip*. both are in scope for send/receive on thin cyb.
 
@@ -115,7 +122,7 @@ cyb sigma  ── observes balances ► openings or local apply
    ┌────┴────────────────────────────────────┐
    │  tip root (BBG_root)                      │
    │    full: own apply                        │
-   │    cell: apply my slice + completeness    │
+   │    partial: apply my slice + completeness    │
    │    light: decide(acc) + fold headers  ◄── clock C (in scope)
    └────┬────────────────────────────────────┘
         │ finality of pays that touch me
@@ -132,7 +139,7 @@ cyb sigma  ── observes balances ► openings or local apply
 
 ### what must work for send/receive (updated scope)
 
-| # | requirement | full | cell | light |
+| # | requirement | full | partial | light |
 |---|---|---|---|---|
 | 1 | zheng validity of spends | yes | yes | yes (verify peer/self proofs) |
 | 2 | foculus finality clock A | yes | yes | yes (via certified domain view / openings against tip) |
@@ -182,7 +189,7 @@ numbers are Earth-scale, hub-domain typical. sparse domains and near-50/50 confl
 | receiver sense NOTIFY | after verified credit at tip | never on bare unauthenticated push |
 | sigma refresh | after apply or verified open | |
 
-acceptance for cyb pure pay: mark received / allow respend only at clock A final against a clock-C (or full/cell-equivalent) tip — never on "submitted".
+acceptance for cyb pure pay: mark received / allow respend only at clock A final against a clock-C (or full/partial-equivalent) tip — never on "submitted".
 
 ### clock B — reward after link (attribution)
 
@@ -236,7 +243,7 @@ cyb does not pick a single policy. sigma updates every balance that moved; sense
 for **light cyb**, grade 2 without grade 4 is incomplete: finality claims need a tip you trust. scope rule:
 
 - full node: grade 4 equivalent via own history; then grade 2 for each pay  
-- cell: grade 4 via continuous completeness + sync (and fold when available); grade 2 for pays  
+- partial: grade 4 via continuous completeness + sync (and fold when available); grade 2 for pays
 - light client: **grade 4 first (fold), then grade 2 per pay via openings**
 
 send/receive on light = grade 4 ∧ grade 2. reward-after-link settle = grade 3 on top when applicable.
@@ -247,7 +254,7 @@ send/receive on light = grade 4 ∧ grade 2. reward-after-link settle = grade 3 
 
 | promise | clocks | in scope | must work |
 |---|---|---|---|
-| show balance | tip + open/apply | yes | bbg Lens or local; tip from C or full/cell |
+| show balance | tip + open/apply | yes | bbg Lens or local; tip from C or full/partial |
 | send coin | A (+ C on light) | yes | prove, gossip, finalize, verify at tip |
 | receive coin + notification | A + sense (+ C on light) | yes | verified opening + NOTIFY |
 | reward after link (pay legs) | A | yes | multi-payee Intent |
@@ -284,7 +291,7 @@ do not advertise "instant finality" for settle rewards. do not treat unauthentic
 
 - [[specs/money-loop]] — normative network money product (cyber/specs)  
 - [[specs/light-money]] — light tip + send/receive implementation contract  
-- [[specs/node-modes]] — full / cell / light duties  
+- [[specs/node-modes]] — full / partial / light duties
 - [[specs/component-ownership]] — who implements which work package  
 - [[life of a signal]] — second-by-second walkthrough and conservative/tuned epoch table  
 - [[foculus overview]] — finality as $\phi^* > \tau$  
