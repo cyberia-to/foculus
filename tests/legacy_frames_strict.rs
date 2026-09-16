@@ -4,7 +4,7 @@ use foculus::frames::{
 };
 use foculus::signal_codec::{CodecError, ErrorKind, MAX_SIGNAL_BYTES};
 use foculus::{BoxMoveRecord, CyberFrame, CyberlinkRecord, SELF_NETWORK, Signal};
-use tape::{Chunk, MARKER, ReadResult, Reader, sigil};
+use tade::{Chunk, MARKER, ReadResult, Reader, sigil};
 
 fn signal() -> Signal {
     Signal {
@@ -181,7 +181,7 @@ fn unknown_events_noise_and_bad_varints_are_errors_with_absolute_positions() {
         })
     ));
     let mut too_large = vec![MARKER, sigil::ZAP, b'b'];
-    tape::encode_varint(MAX_SIGNAL_BYTES as u64 + 1, &mut too_large);
+    tade::encode_varint(MAX_SIGNAL_BYTES as u64 + 1, &mut too_large);
     assert!(matches!(
         decode_events_strict(&too_large),
         Err(CodecError {

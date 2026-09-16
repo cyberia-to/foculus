@@ -21,7 +21,7 @@ pub fn decode_events_strict(bytes: &[u8]) -> Result<Vec<CyberFrame>, CodecError>
     Ok(result)
 }
 
-/// Byte spans include the complete tape frame, allowing byte-exact import.
+/// Byte spans include the complete tade frame, allowing byte-exact import.
 pub fn decode_events_strict_with_spans(
     bytes: &[u8],
 ) -> Result<Vec<(std::ops::Range<usize>, CyberFrame)>, CodecError> {
@@ -35,11 +35,11 @@ pub fn decode_events_strict_with_spans(
         if events.len() == MAX_LEGACY_EVENTS {
             return Err(input.error(ErrorKind::Limit("legacy event count")));
         }
-        if input.byte()? != tape::MARKER {
-            return Err(input.error(ErrorKind::Invalid("tape marker")));
+        if input.byte()? != tade::MARKER {
+            return Err(input.error(ErrorKind::Invalid("tade marker")));
         }
         let sigil = input.byte()?;
-        if !matches!(sigil, tape::sigil::ZAP | tape::sigil::KET) {
+        if !matches!(sigil, tade::sigil::ZAP | tade::sigil::KET) {
             return Err(input.error(ErrorKind::Invalid("legacy event sigil")));
         }
         if input.byte()? != RENDER_BIN {
@@ -53,8 +53,8 @@ pub fn decode_events_strict_with_spans(
         let payload = input.take(length as usize)?;
         let mut frame = Reader::new(payload, start);
         let event = match sigil {
-            tape::sigil::ZAP => CyberFrame::Signal(signal(&mut frame)?),
-            tape::sigil::KET => CyberFrame::Intent(intent(&mut frame)?),
+            tade::sigil::ZAP => CyberFrame::Signal(signal(&mut frame)?),
+            tade::sigil::KET => CyberFrame::Intent(intent(&mut frame)?),
             _ => return Err(frame.error(ErrorKind::Invalid("legacy event sigil"))),
         };
         frame.finish()?;
