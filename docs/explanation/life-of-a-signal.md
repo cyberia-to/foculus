@@ -6,7 +6,7 @@ crystal-domain: cyber
 
 # the life of a signal
 
-you are a [[neuron]]. you just linked [[particle]] A to particle B, staked on it, and your [[zheng]] proof $\sigma$ came out of the prover. here is what happens next -- first in seconds, then in the minute that follows, and the strange part throughout is what never happens
+you are a [[neuron]]. you just linked [[file]] A to file B, staked on it, and your [[zheng]] proof $\sigma$ came out of the prover. here is what happens next -- first in seconds, then in the minute that follows, and the strange part throughout is what never happens
 
 ## t = 0 -- you emit
 

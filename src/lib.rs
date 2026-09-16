@@ -26,6 +26,7 @@
 
 pub mod chain;
 pub mod frames;
+pub mod signal_codec;
 pub mod vdf;
 
 pub mod das;
