@@ -86,6 +86,18 @@ one verified proof per cluster, no earlier.
 
 ## difficulty
 
+### settlement difficulty: banded by cluster size
+
+`try_settlement_ticket`'s per-attempt cost is `settlement::marginals`, one `tru::impulse` call per contributor in the coalition — linear in the cluster's contributor count $n$. a single flat `settle-target` therefore gives every cluster the same win probability per attempt but not the same win probability per unit of wall-clock time: a hub cluster with $n$ two orders of magnitude above a fringe cluster's spends two orders of magnitude longer per attempt, so it systematically under-samples within the settlement window and never reaches $k_{\min}$ — the open question [[life of a signal]] flags at the cluster-size-variance paragraph.
+
+progress-freedom restores equal expected wall-clock time to a winning ticket across cluster sizes by banding the target linearly with $n$:
+
+$$\text{target}(n) = \text{target}_0 \cdot \frac{n}{n_0}$$
+
+for a baseline cluster size $n_0$ and its target $\text{target}_0$. since win probability per attempt is $\text{target}(n) / 2^{64}$ and attempt cost is $\propto n$, expected time to win, $\text{cost}(n) / \text{win-prob}(n)$, is constant in $n$. `tickets::banded_target(base_target, n_contrib, base_n)` computes this, saturating at `u64::MAX` for clusters much larger than the baseline. this only rebalances *which* target a cluster's miners grind against; it changes no other part of the win-test, and a cluster of exactly $n_0$ contributors is unaffected.
+
+### fold difficulty
+
 `fold-target` adjusts per epoch so the tree over $k_{\text{miners}}$ self-accumulators converges to a root within the fold window. difficulty is ratio-policed against the settlement difficulty: thin settlement work → fewer input pairs → fold-target loosens so the tree still completes. a fold step exercises the same four GFP primitives (fma, ntt, p2r, lut) as a marginal sample, so difficulty has a physical floor set by hardware throughput, not a synthetic puzzle.
 
 ## payment
