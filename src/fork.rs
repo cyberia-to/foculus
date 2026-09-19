@@ -172,4 +172,61 @@ mod tests {
     fn minhash_rejects_empty() {
         assert_eq!(MinHash.resolve(&[], &empty_view()), Err(ForkError::Empty));
     }
+
+    /// Deterministic RNG (xorshift64), matching the seeding convention used by
+    /// `tests/million.rs` — reproducible without external crates.
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+        fn shuffle<T>(&mut self, items: &mut [T]) {
+            for i in (1..items.len()).rev() {
+                let j = (self.next() as usize) % (i + 1);
+                items.swap(i, j);
+            }
+        }
+    }
+
+    /// Property #8 ("no two nodes finalize conflicting state") depends on every
+    /// node's fork-choice naming the identical single winner for a conflict group,
+    /// however that node assembled its local view. `minhash_is_deterministic_and_
+    /// order_independent` establishes this for two-way conflicts; here the same
+    /// claim is checked for conflict groups from 2 to 16 members, each resolved
+    /// under 50 random arrival orders, so agreement is not an artifact of the
+    /// pairwise case.
+    #[test]
+    fn minhash_agrees_across_n_way_conflicts_and_many_arrival_orders() {
+        let v = empty_view();
+        let mut rng = Rng(0x9E3779B97F4A7C15);
+        for n in 2..=16usize {
+            let members: Vec<Signal> = (0..n)
+                .map(|i| sig(1, 0, i as u8, (i as u8).wrapping_add(100)))
+                .collect();
+            let true_min = members
+                .iter()
+                .map(Signal::content_id)
+                .min()
+                .expect("nonempty group");
+
+            let mut first_winner = None;
+            for _ in 0..50 {
+                let mut shuffled = members.clone();
+                rng.shuffle(&mut shuffled);
+                let idx = MinHash.resolve(&shuffled, &v).unwrap();
+                let winner = shuffled[idx].content_id();
+                assert_eq!(winner, true_min, "n={n}: winner must be the minimum content_id");
+                match first_winner {
+                    None => first_winner = Some(winner),
+                    Some(w) => assert_eq!(
+                        w, winner,
+                        "n={n}: every arrival order must name the same winner"
+                    ),
+                }
+            }
+        }
+    }
 }
