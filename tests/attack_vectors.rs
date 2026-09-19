@@ -3,6 +3,7 @@
 //! Each test models a specific adversarial scenario.
 //! If these pass, the system rejects all tested attacks.
 
+use foculus::beacon::{self, GENESIS_PREV, TEST_OUTER_T};
 use foculus::store::{self, FileEntry, GSet, ValidationError, MAX_CLOCK_DRIFT_MS};
 
 // ═══════════════════════════════════════════════════════════════════
@@ -302,6 +303,89 @@ fn attack_merkle_omission_detectable() {
     partial.insert(e1);
 
     assert_ne!(full.merkle_root(), partial.merkle_root());
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// ATTACK: epoch beacon binding (property 3.6 — unpredictable, unbiasable)
+//
+// The outer VDF is expensive to run (sequential squarings) but cheap to
+// verify. Every one of these attacks tries to reuse a genuine, valid
+// outer_vdf proof under a different context by relabeling one field of
+// the artifact after the fact — the only way to win is to recompute the
+// full VDF from scratch, which these tests confirm is enforced.
+// ═══════════════════════════════════════════════════════════════════
+
+/// Front-running: an attacker who has already seen the outer VDF output
+/// tries to swap in different claims after the fact, without redoing the
+/// delay. specs/beacon.md requires claims_root to freeze *before* the
+/// outer VDF runs precisely to block this.
+#[test]
+fn attack_beacon_claims_substitution_after_vdf() {
+    let honest_claims = beacon::claims_root(&[[1u8; 32]]);
+    let art = beacon::open_beacon(1, &GENESIS_PREV, &honest_claims, &[5], TEST_OUTER_T);
+    assert!(beacon::verify_beacon(&art));
+
+    let mut forged = art.clone();
+    forged.claims_root = beacon::claims_root(&[[2u8; 32]]);
+    assert!(
+        !beacon::verify_beacon(&forged),
+        "claims substitution after the VDF completed must be rejected"
+    );
+}
+
+/// Epoch relabeling: a valid artifact from one epoch must not verify as
+/// belonging to another epoch without recomputation — blocks presenting
+/// a stale beacon as the current epoch's.
+#[test]
+fn attack_beacon_epoch_relabel() {
+    let cr = beacon::claims_root(&[[1u8; 32]]);
+    let art = beacon::open_beacon(1, &GENESIS_PREV, &cr, &[5], TEST_OUTER_T);
+    assert!(beacon::verify_beacon(&art));
+
+    let mut forged = art.clone();
+    forged.epoch = 2;
+    assert!(
+        !beacon::verify_beacon(&forged),
+        "relabeling a beacon's epoch without recomputing must be rejected"
+    );
+}
+
+/// Parent substitution: swapping in a different `prev` without redoing the
+/// VDF would let a forker pick among ancestors after the fact. The VDF
+/// input is bound to `prev` (quiet path), so this must fail.
+#[test]
+fn attack_beacon_prev_substitution() {
+    let cr = beacon::claims_root(&[[1u8; 32]]);
+    let honest_prev = [7u8; 32];
+    let art = beacon::open_beacon(1, &honest_prev, &cr, &[], TEST_OUTER_T);
+    assert!(beacon::verify_beacon(&art));
+
+    let mut forged = art.clone();
+    forged.prev = [8u8; 32];
+    assert!(
+        !beacon::verify_beacon(&forged),
+        "swapping prev without recomputing the VDF must be rejected"
+    );
+}
+
+/// Splicing: an outer VDF proof computed for one signal set is genuinely
+/// valid on its own (`vdf::verify` passes), but it must not transplant
+/// into an artifact claiming a different signal_root — otherwise an
+/// attacker could grind signal sets for a favorable *output* and staple
+/// it to whichever signal_root they prefer to report.
+#[test]
+fn attack_beacon_outer_vdf_splice_across_signal_sets() {
+    let cr = beacon::claims_root(&[[1u8; 32]]);
+    let a = beacon::open_beacon(1, &GENESIS_PREV, &cr, &[1, 2, 3], TEST_OUTER_T);
+    let b = beacon::open_beacon(1, &GENESIS_PREV, &cr, &[9, 9, 9], TEST_OUTER_T);
+    assert_ne!(a.signal_root, b.signal_root);
+
+    let mut forged = a.clone();
+    forged.outer_vdf = b.outer_vdf;
+    assert!(
+        !beacon::verify_beacon(&forged),
+        "an outer VDF proof computed for a different signal_root must be rejected"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════
