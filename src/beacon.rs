@@ -8,16 +8,17 @@
 //! Construction (live):
 //! ```text
 //! signal_root = H(sort{ π_vdf.output : i ∈ S_E })   // empty → zeros
-//! if S_E empty:
-//!   vdf_in = challenge(prev)
-//! else:
-//!   vdf_in = challenge(signal_root)
-//! outer     = VDF_T(vdf_in)
-//! b_E       = Hemera(domain ‖ epoch ‖ prev ‖ claims_root ‖ signal_root ‖ outer.output)
+//! vdf_in      = challenge(Hemera(domain_in ‖ epoch ‖ prev ‖ claims_root ‖ signal_root))
+//! outer       = VDF_T(vdf_in)
+//! b_E         = Hemera(domain ‖ epoch ‖ prev ‖ claims_root ‖ signal_root ‖ outer.output)
 //! ```
 //!
 //! Claims must be frozen (`claims_root`) before the outer VDF runs so orderings
-//! cannot be front-run. Quiet epochs re-delay `prev` (always live).
+//! cannot be front-run. The delay input commits to every field b_E commits to,
+//! so none of them can be relabeled after the delay has been paid: a different
+//! epoch, parent, claim set or signal set needs its own T squarings, not a
+//! cheap re-hash of the same VDF output. Quiet epochs (empty S_E) still
+//! re-delay `prev` through the same input (always live).
 
 use cyber_hemera::hash as hemera_hash;
 
@@ -25,6 +26,9 @@ use crate::vdf::{self, VdfProof};
 
 /// Domain separation for the beacon hash.
 const DOMAIN: &[u8] = b"foculus-beacon-v0";
+
+/// Domain separation for the outer VDF input.
+const DOMAIN_IN: &[u8] = b"foculus-beacon-in-v0";
 
 /// Genesis previous beacon (epoch 0 has no parent).
 pub const GENESIS_PREV: [u8; 32] = [0u8; 32];
@@ -97,13 +101,8 @@ pub fn open_beacon(
     outer_t: u64,
 ) -> BeaconArtifact {
     let signal_root = signal_vdf_root(signal_outputs);
-    let vdf_in = if signal_outputs.is_empty() {
-        vdf::challenge_from_hash(prev)
-    } else {
-        vdf::challenge_from_hash(&signal_root)
-    };
-    let outer_vdf = vdf::evaluate(vdf_in, outer_t);
-    let beacon = finalize_beacon(epoch, prev, claims_root, &signal_root, outer_vdf.output);
+    let outer_vdf = vdf::evaluate(vdf_input(epoch, prev, claims_root, &signal_root), outer_t);
+    let beacon = beacon_digest(epoch, prev, claims_root, &signal_root, outer_vdf.output);
     BeaconArtifact {
         epoch,
         prev: *prev,
@@ -114,20 +113,16 @@ pub fn open_beacon(
     }
 }
 
-/// Verify a [`BeaconArtifact`]: re-check outer VDF and recompute b_E.
+/// Verify a [`BeaconArtifact`]: re-check the outer VDF, check its input is
+/// the one this artifact's fields commit to, and recompute b_E.
 pub fn verify_beacon(art: &BeaconArtifact) -> bool {
     if !vdf::verify(&art.outer_vdf) {
         return false;
     }
-    let expected_in = if art.signal_root == [0u8; 32] {
-        vdf::challenge_from_hash(&art.prev)
-    } else {
-        vdf::challenge_from_hash(&art.signal_root)
-    };
-    if art.outer_vdf.input != expected_in {
+    if art.outer_vdf.input != vdf_input(art.epoch, &art.prev, &art.claims_root, &art.signal_root) {
         return false;
     }
-    let b = finalize_beacon(
+    let b = beacon_digest(
         art.epoch,
         &art.prev,
         &art.claims_root,
@@ -150,7 +145,23 @@ pub fn advance_empty(epoch: u64, prev: &[u8; 32]) -> [u8; 32] {
     open_beacon(epoch, prev, &[0u8; 32], &[], DEFAULT_OUTER_T).beacon
 }
 
-fn finalize_beacon(
+/// The outer VDF input for an epoch: a challenge derived from every field
+/// b_E commits to, so the delay is paid for this (epoch, prev, claims,
+/// signals) tuple and for no other.
+pub fn vdf_input(epoch: u64, prev: &[u8; 32], claims_root: &[u8; 32], signal_root: &[u8; 32]) -> u64 {
+    let mut buf = Vec::with_capacity(DOMAIN_IN.len() + 8 + 32 * 3);
+    buf.extend_from_slice(DOMAIN_IN);
+    buf.extend_from_slice(&epoch.to_le_bytes());
+    buf.extend_from_slice(prev);
+    buf.extend_from_slice(claims_root);
+    buf.extend_from_slice(signal_root);
+    vdf::challenge_from_hash(&hash32(&buf))
+}
+
+/// b_E from its bound fields and the outer VDF output. Public so a verifier
+/// (or an attacker) can recompute it: the hash is cheap, the delay is not,
+/// and [`verify_beacon`] accepts only the pair that agree with each other.
+pub fn beacon_digest(
     epoch: u64,
     prev: &[u8; 32],
     claims_root: &[u8; 32],

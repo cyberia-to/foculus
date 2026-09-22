@@ -309,16 +309,33 @@ fn attack_merkle_omission_detectable() {
 // ATTACK: epoch beacon binding (property 3.6 — unpredictable, unbiasable)
 //
 // The outer VDF is expensive to run (sequential squarings) but cheap to
-// verify. Every one of these attacks tries to reuse a genuine, valid
-// outer_vdf proof under a different context by relabeling one field of
-// the artifact after the fact — the only way to win is to recompute the
-// full VDF from scratch, which these tests confirm is enforced.
+// verify, and b_E is a cheap hash over (epoch, prev, claims_root,
+// signal_root, VDF output). Every attack below takes a genuine artifact,
+// relabels one field, and does the best a cheap attacker can: recomputes
+// b_E with `beacon_digest` so the hash is self-consistent again. verify
+// must still reject, because the VDF input itself commits to the field —
+// the only way to make the relabeled artifact verify is to pay T
+// squarings again for the new tuple.
 // ═══════════════════════════════════════════════════════════════════
 
+/// Re-hash b_E over an artifact's current fields — the cheap step an
+/// attacker can always take after relabeling; the delay is the step it
+/// cannot.
+fn rehash(art: &mut beacon::BeaconArtifact) {
+    art.beacon = beacon::beacon_digest(
+        art.epoch,
+        &art.prev,
+        &art.claims_root,
+        &art.signal_root,
+        art.outer_vdf.output,
+    );
+}
+
 /// Front-running: an attacker who has already seen the outer VDF output
-/// tries to swap in different claims after the fact, without redoing the
-/// delay. specs/beacon.md requires claims_root to freeze *before* the
-/// outer VDF runs precisely to block this.
+/// tries to swap in different claims after the fact — grinding claims_root
+/// against a known VDF output would let it steer b_E. specs/beacon.md
+/// requires claims_root to freeze *before* the outer VDF runs precisely to
+/// block this; the VDF input commits to it, so the swap needs a new delay.
 #[test]
 fn attack_beacon_claims_substitution_after_vdf() {
     let honest_claims = beacon::claims_root(&[[1u8; 32]]);
@@ -327,9 +344,10 @@ fn attack_beacon_claims_substitution_after_vdf() {
 
     let mut forged = art.clone();
     forged.claims_root = beacon::claims_root(&[[2u8; 32]]);
+    rehash(&mut forged);
     assert!(
         !beacon::verify_beacon(&forged),
-        "claims substitution after the VDF completed must be rejected"
+        "claims substitution after the VDF completed must be rejected even with b_E re-hashed"
     );
 }
 
@@ -344,15 +362,16 @@ fn attack_beacon_epoch_relabel() {
 
     let mut forged = art.clone();
     forged.epoch = 2;
+    rehash(&mut forged);
     assert!(
         !beacon::verify_beacon(&forged),
-        "relabeling a beacon's epoch without recomputing must be rejected"
+        "relabeling a beacon's epoch without recomputing the VDF must be rejected"
     );
 }
 
 /// Parent substitution: swapping in a different `prev` without redoing the
-/// VDF would let a forker pick among ancestors after the fact. The VDF
-/// input is bound to `prev` (quiet path), so this must fail.
+/// VDF would let a forker pick among ancestors after the fact. Checked on
+/// the quiet path (no signals), where `prev` is the only entropy.
 #[test]
 fn attack_beacon_prev_substitution() {
     let cr = beacon::claims_root(&[[1u8; 32]]);
@@ -362,6 +381,7 @@ fn attack_beacon_prev_substitution() {
 
     let mut forged = art.clone();
     forged.prev = [8u8; 32];
+    rehash(&mut forged);
     assert!(
         !beacon::verify_beacon(&forged),
         "swapping prev without recomputing the VDF must be rejected"
@@ -382,10 +402,25 @@ fn attack_beacon_outer_vdf_splice_across_signal_sets() {
 
     let mut forged = a.clone();
     forged.outer_vdf = b.outer_vdf;
+    rehash(&mut forged);
     assert!(
         !beacon::verify_beacon(&forged),
         "an outer VDF proof computed for a different signal_root must be rejected"
     );
+}
+
+/// Control: the relabel-and-rehash move is exactly what an honest
+/// re-derivation looks like *with* the delay paid — so the rejections
+/// above are the VDF binding, not a hash mismatch that any re-hash fixes.
+#[test]
+fn beacon_rehash_matches_honest_open() {
+    let cr = beacon::claims_root(&[[1u8; 32]]);
+    let art = beacon::open_beacon(3, &[7u8; 32], &cr, &[5], TEST_OUTER_T);
+    let mut copy = art.clone();
+    copy.beacon = [0u8; 32];
+    rehash(&mut copy);
+    assert_eq!(copy.beacon, art.beacon);
+    assert!(beacon::verify_beacon(&copy));
 }
 
 // ═══════════════════════════════════════════════════════════════════
