@@ -33,6 +33,8 @@ each $\pi^{\text{vdf}}_i = \text{VDF}(\text{prev}_i, T_{\min})$ is the per-sourc
 
 when $\mathcal{S}_E$ is empty — a quiet or partitioned epoch — the beacon advances by re-delaying the previous value, $b_E = \text{VDF}_T(b_{E-1})$. the beacon is therefore always defined and always moves.
 
+binding. the outer VDF input is a challenge over the whole tuple the beacon commits to — $(E,\ b_{E-1},\ \text{claims\_root},\ \text{signal\_root})$ — and $b_E$ is a hash over that tuple and the VDF output. relabeling any field after the delay (another epoch, another parent, another claim set, another signal set) changes the input the delay was paid for, so re-hashing $b_E$ over the relabeled fields never verifies; only a fresh $T$ squarings for the new tuple does. `tests/attack_vectors.rs` exercises the four relabelings with the digest recomputed (`beacon::vdf_input`, `beacon::beacon_digest`).
+
 ## why each requirement holds
 
 unpredictable. $\mathcal{S}_E$ is the foculus-finalized set, fixed only after propose closes (a particle is final when $\phi^*_i > \tau$, [[foculus]]). nothing in $b_E$ is known while claims can still be placed.
