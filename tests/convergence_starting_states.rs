@@ -1,4 +1,4 @@
-//! Property #3 of launch.md's registry, row 9: nodes converge from different
+//! Core 3 of launch.md, registry row 9: nodes converge from different
 //! starting states. Two nodes that receive the same cyberlinks in different
 //! arrival orders build [`tru::FocusingGraph`] with different internal node
 //! indices (assigned by first appearance — see `FocusingGraph::build`), yet
