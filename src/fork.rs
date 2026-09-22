@@ -212,20 +212,17 @@ mod tests {
                 .min()
                 .expect("nonempty group");
 
-            let mut first_winner = None;
+            // Every order must name the true minimum — which is one fixed
+            // signal, so agreement across orders follows from this alone.
             for _ in 0..50 {
                 let mut shuffled = members.clone();
                 rng.shuffle(&mut shuffled);
-                let idx = MinHash.resolve(&shuffled, &v).unwrap();
-                let winner = shuffled[idx].content_id();
-                assert_eq!(winner, true_min, "n={n}: winner must be the minimum content_id");
-                match first_winner {
-                    None => first_winner = Some(winner),
-                    Some(w) => assert_eq!(
-                        w, winner,
-                        "n={n}: every arrival order must name the same winner"
-                    ),
-                }
+                let idx = MinHash.resolve(&shuffled, &v).expect("nonempty group resolves");
+                assert_eq!(
+                    shuffled[idx].content_id(),
+                    true_min,
+                    "n={n}: every arrival order must name the minimum content_id"
+                );
             }
         }
     }
