@@ -558,7 +558,7 @@ impl VDiskManager {
 /// Convert hex string to Hash (simplified).
 fn hex_to_hash(hex: &str) -> Result<cyber_hemera::Hash, String> {
     // Hash internally stores [u8; 32]. Parse from hex.
-    if hex.len() != 64 {
+    if hex.len() != 64 || !hex.is_ascii() {
         return Err("invalid hash hex length".to_string());
     }
     let mut bytes = [0u8; 32];
@@ -572,6 +572,18 @@ fn hex_to_hash(hex: &str) -> Result<cyber_hemera::Hash, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hex_to_hash_rejects_non_ascii_without_panicking() {
+        // a 64-byte string containing one multi-byte UTF-8 character keeps
+        // the fixed-length guard (`hex.len() != 64`) satisfied while still
+        // landing a `&hex[i*2..i*2+2]` slice boundary mid-character: 'é' is
+        // 2 bytes, placed at offset 1 so the first 2-byte chunk (0..2) ends
+        // inside it.
+        let s: String = "a".to_string() + "é" + &"a".repeat(61);
+        assert_eq!(s.len(), 64);
+        assert!(hex_to_hash(&s).is_err());
+    }
 
     fn setup() -> (tempfile::TempDir, VDiskManager) {
         let dir = tempfile::tempdir().unwrap();
