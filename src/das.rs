@@ -118,18 +118,20 @@ pub enum Availability {
 /// Each response counts as passed only if it is present and verifies
 /// against the commitment; a withheld shard counts as a failed sample, the
 /// same as a tampered one, so an adversary cannot avoid detection by
-/// silence instead of forging data. `min_confidence` is the threshold
-/// `confidence(passed)` must clear, e.g. `confidence(20) ≈ 0.999999`.
+/// silence instead of forging data. `min_verified` is the number of passed
+/// samples the round must reach — `confidence` is monotone in it, so a
+/// confidence target translates to a count (20 for `confidence(20)`, about
+/// 1 − 2⁻²⁰) and the verdict needs no floating point.
 pub fn decide_availability(
     responses: &[Option<Sample>],
     commitment: &DasCommitment,
-    min_confidence: f64,
+    min_verified: usize,
 ) -> Availability {
     let passed = responses
         .iter()
         .filter(|r| matches!(r, Some(s) if verify_sample(s, commitment)))
         .count();
-    if confidence(passed) >= min_confidence {
+    if passed >= min_verified {
         Availability::Available
     } else {
         Availability::Unavailable
@@ -215,10 +217,7 @@ mod tests {
         let commitment = commit(&shards, k, data.len());
 
         let responses: Vec<Option<Sample>> = shards.iter().map(|s| Some(sample(s))).collect();
-        assert_eq!(
-            decide_availability(&responses, &commitment, confidence(20)),
-            Availability::Available
-        );
+        assert_eq!(decide_availability(&responses, &commitment, 20), Availability::Available);
     }
 
     #[test]
@@ -233,10 +232,7 @@ mod tests {
             .iter()
             .map(|s| if s.index == 7 { WITHHELD } else { Some(sample(s)) })
             .collect();
-        assert_eq!(
-            decide_availability(&responses, &commitment, confidence(20)),
-            Availability::Available
-        );
+        assert_eq!(decide_availability(&responses, &commitment, 20), Availability::Available);
     }
 
     #[test]
@@ -247,16 +243,13 @@ mod tests {
         let shards = erasure::encode(data, k, n);
         let commitment = commit(&shards, k, data.len());
 
-        // Withhold every shard past the first three: far below the
-        // confidence(20) threshold no matter how many are requested.
+        // Withhold every shard past the first three: far below a 20-sample
+        // threshold no matter how many are requested.
         let responses: Vec<Option<Sample>> = shards
             .iter()
             .map(|s| if s.index < 3 { Some(sample(s)) } else { WITHHELD })
             .collect();
-        assert_eq!(
-            decide_availability(&responses, &commitment, confidence(20)),
-            Availability::Unavailable
-        );
+        assert_eq!(decide_availability(&responses, &commitment, 20), Availability::Unavailable);
     }
 
     #[test]
@@ -272,6 +265,7 @@ mod tests {
             tampered.shard_data[0] ^= 0xFF;
         }
 
+        let honest_round: Vec<Option<Sample>> = shards.iter().map(|s| Some(sample(s))).collect();
         let withheld_round: Vec<Option<Sample>> = std::iter::once(WITHHELD)
             .chain(shards[1..].iter().map(|s| Some(sample(s))))
             .collect();
@@ -279,9 +273,10 @@ mod tests {
             .chain(shards[1..].iter().map(|s| Some(sample(s))))
             .collect();
 
-        assert_eq!(
-            decide_availability(&withheld_round, &commitment, confidence(20)),
-            decide_availability(&tampered_round, &commitment, confidence(20)),
-        );
+        // Threshold at the edge — every requested shard must verify — so a
+        // single failure of either kind is what flips the verdict.
+        assert_eq!(decide_availability(&honest_round, &commitment, n), Availability::Available);
+        assert_eq!(decide_availability(&withheld_round, &commitment, n), Availability::Unavailable);
+        assert_eq!(decide_availability(&tampered_round, &commitment, n), Availability::Unavailable);
     }
 }
