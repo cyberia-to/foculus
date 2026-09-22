@@ -100,6 +100,44 @@ pub fn confidence(successful_samples: usize) -> f64 {
     1.0 - 0.5_f64.powi(successful_samples as i32)
 }
 
+/// A sampler's request that went unanswered — the peer did not return the
+/// shard, whether because it withholds it or because it does not have it.
+pub const WITHHELD: Option<Sample> = None;
+
+/// The verdict of a sampling round: enough of the requested shards verified
+/// to meet the confidence threshold, or not.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Availability {
+    Available,
+    Unavailable,
+}
+
+/// Decide availability from a round of sampling requests, where a withheld
+/// or unanswered request is `None` rather than a `Sample`.
+///
+/// Each response counts as passed only if it is present and verifies
+/// against the commitment; a withheld shard counts as a failed sample, the
+/// same as a tampered one, so an adversary cannot avoid detection by
+/// silence instead of forging data. `min_verified` is the number of passed
+/// samples the round must reach — `confidence` is monotone in it, so a
+/// confidence target translates to a count (20 for `confidence(20)`, about
+/// 1 − 2⁻²⁰) and the verdict needs no floating point.
+pub fn decide_availability(
+    responses: &[Option<Sample>],
+    commitment: &DasCommitment,
+    min_verified: usize,
+) -> Availability {
+    let passed = responses
+        .iter()
+        .filter(|r| matches!(r, Some(s) if verify_sample(s, commitment)))
+        .count();
+    if passed >= min_verified {
+        Availability::Available
+    } else {
+        Availability::Unavailable
+    }
+}
+
 /// Serialize a shard's field elements to bytes for hashing.
 fn shard_to_bytes(shard: &Shard) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(shard.data.len() * 8);
@@ -168,5 +206,77 @@ mod tests {
         let (passed, total) = verify_availability(&samples, &commitment);
         assert_eq!(passed, n);
         assert_eq!(total, n);
+    }
+
+    #[test]
+    fn all_present_shards_pass_as_available() {
+        let data = b"every shard answers its sampling request";
+        let k = 4;
+        let n = 32;
+        let shards = erasure::encode(data, k, n);
+        let commitment = commit(&shards, k, data.len());
+
+        let responses: Vec<Option<Sample>> = shards.iter().map(|s| Some(sample(s))).collect();
+        assert_eq!(decide_availability(&responses, &commitment, 20), Availability::Available);
+    }
+
+    #[test]
+    fn one_withheld_chunk_among_many_still_available() {
+        let data = b"one silent peer should not sink an otherwise healthy sample round";
+        let k = 4;
+        let n = 32;
+        let shards = erasure::encode(data, k, n);
+        let commitment = commit(&shards, k, data.len());
+
+        let responses: Vec<Option<Sample>> = shards
+            .iter()
+            .map(|s| if s.index == 7 { WITHHELD } else { Some(sample(s)) })
+            .collect();
+        assert_eq!(decide_availability(&responses, &commitment, 20), Availability::Available);
+    }
+
+    #[test]
+    fn majority_withheld_flags_unavailable() {
+        let data = b"an adversary hiding most of the data must not pass sampling";
+        let k = 4;
+        let n = 32;
+        let shards = erasure::encode(data, k, n);
+        let commitment = commit(&shards, k, data.len());
+
+        // Withhold every shard past the first three: far below a 20-sample
+        // threshold no matter how many are requested.
+        let responses: Vec<Option<Sample>> = shards
+            .iter()
+            .map(|s| if s.index < 3 { Some(sample(s)) } else { WITHHELD })
+            .collect();
+        assert_eq!(decide_availability(&responses, &commitment, 20), Availability::Unavailable);
+    }
+
+    #[test]
+    fn withheld_shard_counts_the_same_as_tampered() {
+        let data = b"silence and forgery must be indistinguishable to the sampler";
+        let k = 4;
+        let n = 32;
+        let shards = erasure::encode(data, k, n);
+        let commitment = commit(&shards, k, data.len());
+
+        let mut tampered = sample(&shards[0]);
+        if !tampered.shard_data.is_empty() {
+            tampered.shard_data[0] ^= 0xFF;
+        }
+
+        let honest_round: Vec<Option<Sample>> = shards.iter().map(|s| Some(sample(s))).collect();
+        let withheld_round: Vec<Option<Sample>> = std::iter::once(WITHHELD)
+            .chain(shards[1..].iter().map(|s| Some(sample(s))))
+            .collect();
+        let tampered_round: Vec<Option<Sample>> = std::iter::once(Some(tampered))
+            .chain(shards[1..].iter().map(|s| Some(sample(s))))
+            .collect();
+
+        // Threshold at the edge — every requested shard must verify — so a
+        // single failure of either kind is what flips the verdict.
+        assert_eq!(decide_availability(&honest_round, &commitment, n), Availability::Available);
+        assert_eq!(decide_availability(&withheld_round, &commitment, n), Availability::Unavailable);
+        assert_eq!(decide_availability(&tampered_round, &commitment, n), Availability::Unavailable);
     }
 }
