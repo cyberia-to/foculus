@@ -79,9 +79,9 @@ pub fn epsilon_support(
 }
 
 /// Union-find over claim indices, merged when their ε-supports overlap.
-/// Returns clusters as sorted claim-index groups, the groups themselves
-/// ordered by their smallest claim id — a canonical output independent of
-/// the order claims were passed in.
+/// Returns clusters as groups of claim indices, members ordered by claim
+/// id and the groups by their smallest claim id — so the listing, not just
+/// the partition, is independent of the order claims were passed in.
 pub fn partition_into_clusters(
     claims: &[RewardClaim],
     adjacency: &Adjacency,
@@ -121,7 +121,10 @@ pub fn partition_into_clusters(
     }
 
     let mut clusters: Vec<Vec<usize>> = groups.into_values().collect();
-    clusters.sort_by_key(|members| members.iter().map(|&i| claims[i].id).min());
+    for members in &mut clusters {
+        members.sort_by_key(|&i| claims[i].id);
+    }
+    clusters.sort_by_key(|members| members.first().map(|&i| claims[i].id));
     clusters
 }
 
@@ -179,22 +182,30 @@ mod tests {
 
     #[test]
     fn partition_is_canonical_across_input_order() {
+        // Claims 1 and 3 meet through the graph (11→30 at radius 1); claim 2
+        // is off on its own. Whatever order the claims arrive in, the
+        // partition must be {1,3} | {2}, listed in the same canonical order.
         let forward = vec![claim(1, 10, 11), claim(2, 20, 21), claim(3, 30, 31)];
         let reversed = vec![claim(3, 30, 31), claim(2, 20, 21), claim(1, 10, 11)];
-        let adjacency = Adjacency::new();
-
-        let a = partition_into_clusters(&forward, &adjacency, 0);
-        let b = partition_into_clusters(&reversed, &adjacency, 0);
+        let mut adjacency = Adjacency::new();
+        adjacency.insert([11; 32], vec![[30; 32]]);
 
         let ids_of = |claims: &[RewardClaim], clusters: &[Vec<usize>]| -> Vec<Vec<[u8; 32]>> {
-            let mut out: Vec<Vec<[u8; 32]>> = clusters
+            clusters
                 .iter()
                 .map(|members| members.iter().map(|&i| claims[i].id).collect())
-                .collect();
-            out.sort();
-            out
+                .collect()
         };
-        assert_eq!(ids_of(&forward, &a), ids_of(&reversed, &b));
+        let a = ids_of(&forward, &partition_into_clusters(&forward, &adjacency, 1));
+        let b = ids_of(&reversed, &partition_into_clusters(&reversed, &adjacency, 1));
+
+        assert_eq!(a, vec![vec![[1; 32], [3; 32]], vec![[2; 32]]]);
+        assert_eq!(a, b, "the partition and its listing must not depend on claim arrival order");
+        assert_eq!(
+            cluster_id(&forward, &[0, 2]),
+            cluster_id(&reversed, &[2, 0]),
+            "the cluster id binds the same members under either arrival order"
+        );
     }
 
     #[test]
