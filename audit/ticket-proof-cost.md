@@ -20,8 +20,8 @@ n = 1, 8, 64, 512 tickets.
 
 Validated with rustc 1.98.0 on macOS arm64, revision `177fad4` (origin/master):
 
-- `cargo check --tests`: succeeds (after the two dependency-version fixes
-  below; no other warnings introduced).
+- `cargo check --tests`: succeeds with the sibling dependency pins aligned
+  (bbg 0.3, zheng 0.4, tade, cyber-lens 0.2); no other warnings introduced.
 - `cargo test`: 144 lib tests, 17 attack_vectors, 1 million, 12 stress, 19
   structural_sync, 1 ticket_proof_cost — all pass, 0 failed.
 - `cargo test --release --test ticket_proof_cost -- --nocapture`:
