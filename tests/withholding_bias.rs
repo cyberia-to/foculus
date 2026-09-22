@@ -60,7 +60,8 @@ fn mean_and_min(tickets: &[SettlementTicket], idx: usize) -> (Fx, Fx) {
     let min = tickets
         .iter()
         .map(|t| t.marginals[idx])
-        .fold(Fx::from_int(1_000_000), |a, b| if b < a { b } else { a });
+        .reduce(|a, b| if b < a { b } else { a })
+        .expect("nonempty pool");
     (mean, min)
 }
 
