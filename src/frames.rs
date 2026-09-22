@@ -3,10 +3,10 @@
 // crystal-type: source
 // crystal-domain: cyber
 // ---
-//! Cyber-dialect tape frames for the sync layer.
+//! Cyber-dialect tade frames for the sync layer.
 //!
-//! sync mints and decodes tape frames carrying sync-protocol particles:
-//! signals, intents, and chunk requests/responses. The tape framing is
+//! sync mints and decodes tade frames carrying sync-protocol particles:
+//! signals, intents, and chunk requests/responses. The tade framing is
 //! self-describing (marker + sigil + render + varint + payload); the cyber
 //! dialect assigns meaning to specific (sigil, render) pairs.
 //!
@@ -14,8 +14,8 @@
 //!
 //! | particle          | sigil  | render | payload                                |
 //! |-------------------|--------|--------|----------------------------------------|
-//! | signal            | ZAP `!` | b      | bincode-encoded Signal envelope        |
-//! | intent            | KET `^` | b      | bincode-encoded IntentRecord           |
+//! | signal            | ZAP `!` | b      | legacy binary Signal payload           |
+//! | intent            | KET `^` | b      | fixed-width IntentRecord               |
 //! | chunk_request     | WUT `?` | b      | (peer_id, chunk_id) tuple              |
 //! | chunk_response    | HAX `#` | b      | raw chunk bytes + inclusion proof      |
 //!
@@ -23,15 +23,20 @@
 //! them and route to chain/erasure as appropriate.
 
 use bbg::IntentRecord;
-use tape::{Chunk, ReadResult, Reader, sigil};
+use tade::{Chunk, ReadResult, Reader, sigil};
 
 use crate::{CyberlinkRecord, SELF_NETWORK, Signal};
 
+mod strict;
+pub use strict::{
+    MAX_LEGACY_EVENTS, MAX_LEGACY_LOG_BYTES, decode_events_strict, decode_events_strict_with_spans,
+};
+
 /// Type-tagged identifier for the renderer field; cyber sync uses 'b'
-/// (binary / bincode payload) across all frame kinds.
+/// (binary payload) across all frame kinds.
 pub const RENDER_BIN: u8 = b'b';
 
-/// Encode a signal as a cyber-dialect tape frame.
+/// Encode a signal as a cyber-dialect tade frame.
 ///
 /// Sigil = ZAP (`!`, effect/imperative) since a signal is a sealed action.
 pub fn encode_signal_frame(signal: &Signal) -> Vec<u8> {
@@ -39,7 +44,7 @@ pub fn encode_signal_frame(signal: &Signal) -> Vec<u8> {
     Chunk::new(sigil::ZAP, RENDER_BIN, payload.into()).encode()
 }
 
-/// Encode an intent record as a cyber-dialect tape frame.
+/// Encode an intent record as a cyber-dialect tade frame.
 ///
 /// Sigil = KET (`^`, lift/abstract) since an intent declares before action.
 pub fn encode_intent_frame(intent: &IntentRecord) -> Vec<u8> {
@@ -49,15 +54,15 @@ pub fn encode_intent_frame(intent: &IntentRecord) -> Vec<u8> {
 
 /// Decode a cyber-dialect signal frame back into a [`Signal`].
 ///
-/// The inverse of [`encode_signal_frame`]: unwraps the tape chunk (must carry
+/// The inverse of [`encode_signal_frame`]: unwraps the tade chunk (must carry
 /// the ZAP sigil) and parses the signal payload. Returns `None` if the bytes
 /// aren't a complete ZAP frame or the payload is malformed.
 ///
 /// The wire form omits the network tag (a peer only ships its own network's
 /// signals) and the proof — so a decoded signal carries `network =
-/// SELF_NETWORK`, an empty `delta_pi`, and `proof = None`. That's exactly the
-/// shape [`Cybergraph::link`](../../cybergraph) rebuilds locally, so a gossiped
-/// signal dedups against a locally-applied one via the SignalChain.
+/// SELF_NETWORK` and `proof = None`; historical suffixes may include box moves
+/// and `delta_pi`. Durable import uses [`decode_events_strict`]; full-field
+/// storage uses [`crate::signal_codec`].
 pub fn decode_signal_frame(bytes: &[u8]) -> Option<Signal> {
     let mut reader = Reader::new();
     reader.feed(bytes);
@@ -67,13 +72,12 @@ pub fn decode_signal_frame(bytes: &[u8]) -> Option<Signal> {
     }
 }
 
-/// Decode every signal frame in a concatenated tape stream, in wire order.
+/// Decode every signal frame in a concatenated tade stream, in wire order.
 ///
-/// Tape frames are self-delimiting, so a durable log or a gossiped batch is
+/// Tade frames are self-delimiting, so a durable log or a gossiped batch is
 /// just frames back-to-back. Non-signal frames (other sigils) are skipped.
-/// Each returned signal feeds straight into
-/// [`Cybergraph::link`](../../cybergraph), which dedups via the SignalChain —
-/// so replaying a log or applying a peer's batch is idempotent.
+/// This compatibility API skips malformed entries. Durable replay must use
+/// [`decode_events_strict`] and retain its legacy profile explicitly.
 pub fn decode_signals(bytes: &[u8]) -> Vec<Signal> {
     let mut reader = Reader::new();
     reader.feed(bytes);
@@ -99,7 +103,7 @@ pub enum CyberFrame {
     Intent(IntentRecord),
 }
 
-/// Decode every signal and intent frame in a concatenated tape stream, in wire
+/// Decode every signal and intent frame in a concatenated tade stream, in wire
 /// order. Used by `on_peer_frame` ingress and by durable-log replay; unknown
 /// sigils (chunk requests/responses, or a consumer's own markers) are skipped.
 pub fn decode_events(bytes: &[u8]) -> Vec<CyberFrame> {
@@ -307,7 +311,7 @@ mod tests {
     #[test]
     fn signal_frame_starts_with_tape_marker_and_zap_sigil() {
         let frame = encode_signal_frame(&empty_signal());
-        assert_eq!(frame[0], 0x1F, "tape unit-separator marker");
+        assert_eq!(frame[0], 0x1F, "tade unit-separator marker");
         assert_eq!(frame[1], sigil::ZAP, "signal sigil");
         assert_eq!(frame[2], RENDER_BIN);
     }
@@ -360,7 +364,7 @@ mod tests {
 
     #[test]
     fn decode_rejects_non_signal_bytes() {
-        assert!(decode_signal_frame(b"not a tape frame").is_none());
+        assert!(decode_signal_frame(b"not a tade frame").is_none());
         assert!(decode_signal_frame(&[]).is_none());
     }
 
