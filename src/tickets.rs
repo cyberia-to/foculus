@@ -100,18 +100,24 @@ impl ClusterAcc {
             .collect()
     }
 
-    /// Hoeffding-style minimum sample count for (ε, δ).
-    /// `k_min = ceil(ln(2/δ) / (2 ε²))`.
-    pub fn k_min(epsilon: f64, delta: f64) -> u64 {
-        if epsilon <= 0.0 || delta <= 0.0 || delta >= 1.0 {
+    /// Hoeffding-style minimum sample count for (ε, δ), in fixed point:
+    /// `k_min = ceil(ln(2/δ) / (2 ε²))`. `Fx::ln` is Goldilocks integer
+    /// arithmetic, so every node derives the same `k_min` — a fold-mining
+    /// decide that this feeds must agree bit-for-bit, and `f64::ln` is not
+    /// guaranteed to (libm differs across platforms).
+    pub fn k_min(epsilon: Fx, delta: Fx) -> u64 {
+        if epsilon <= Fx::ZERO || delta <= Fx::ZERO || delta >= Fx::ONE {
             return 1;
         }
-        let num = (2.0 / delta).ln();
-        let den = 2.0 * epsilon * epsilon;
-        (num / den).ceil().max(1.0) as u64
+        let ln_term = Fx::from_int(2).div(delta).ln();
+        let den = Fx::from_int(2) * epsilon * epsilon;
+        let ratio = ln_term.div(den);
+        let floor = ratio.floor_to_i64().max(0);
+        let k = if Fx::from_int(floor) == ratio { floor } else { floor + 1 };
+        k.max(1) as u64
     }
 
-    pub fn meets_precision(&self, epsilon: f64, delta: f64) -> bool {
+    pub fn meets_precision(&self, epsilon: Fx, delta: Fx) -> bool {
         self.k >= Self::k_min(epsilon, delta)
     }
 }
@@ -638,7 +644,36 @@ mod tests {
     #[test]
     fn k_min_hoeffding() {
         // ε=0.1, δ=0.01 → ln(200)/(2*0.01) ≈ 5.3/0.02 ≈ 265
-        let k = ClusterAcc::k_min(0.1, 0.01);
+        let k = ClusterAcc::k_min(Fx::from_ratio(1, 10), Fx::from_ratio(1, 100));
         assert!(k > 100 && k < 400);
+    }
+
+    #[test]
+    fn k_min_degenerate_inputs_return_one() {
+        assert_eq!(ClusterAcc::k_min(Fx::ZERO, Fx::from_ratio(1, 100)), 1);
+        assert_eq!(ClusterAcc::k_min(Fx::from_ratio(1, 10), Fx::ZERO), 1);
+        assert_eq!(ClusterAcc::k_min(Fx::from_ratio(1, 10), Fx::ONE), 1);
+    }
+
+    #[test]
+    fn k_min_matches_f64_hoeffding_within_rounding() {
+        // Cross-check the fixed-point k_min against the textbook f64 formula
+        // at several (ε, δ) pairs — same ceil(ln(2/δ)/(2ε²)), off by at most
+        // one unit near a boundary from fixed-point rounding.
+        for (eps_num, eps_den, delta_num, delta_den) in
+            [(1, 10, 1, 100), (1, 20, 1, 1000), (1, 4, 1, 10), (3, 100, 1, 50)]
+        {
+            let epsilon = eps_num as f64 / eps_den as f64;
+            let delta = delta_num as f64 / delta_den as f64;
+            let want = ((2.0 / delta).ln() / (2.0 * epsilon * epsilon)).ceil() as i64;
+            let got = ClusterAcc::k_min(
+                Fx::from_ratio(eps_num, eps_den),
+                Fx::from_ratio(delta_num, delta_den),
+            ) as i64;
+            assert!(
+                (got - want).abs() <= 1,
+                "ε={epsilon} δ={delta}: fixed-point k_min={got} vs f64={want}"
+            );
+        }
     }
 }
