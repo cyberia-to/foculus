@@ -36,11 +36,11 @@ samples/s.
 ## machine 1 of 4: Apple Silicon (this dev Mac)
 
 Validated with rustc 1.98.0 on macOS 26.4.1 arm64, chip `Apple M4 Max`
-(`Mac16,5`), revision `177fad4` (origin/master), after two pre-existing
-path-dependency fixes needed to build this checkout at all (see Remains):
+(`Mac16,5`), revision `177fad4` (origin/master) with the sibling dependency
+pins aligned (bbg 0.3, zheng 0.4, tade, cyber-lens 0.2):
 
 - `cargo check --tests`: succeeds.
-- `cargo test --release`: 143 lib + 19 test-file tests pass, 0 failed
+- `cargo test --release`: 144 lib + all test-file suites pass, 0 failed
   (`vdisk::tests::rechunk_on_device_join` is flaky in the full-suite run —
   fails under parallel `cargo test --release`, passes every time run alone
   or when the full suite is re-run; pre-existing, unrelated to this change,
@@ -87,15 +87,6 @@ hardware_profile` invocation each, not new code.
 - reconcile with property #3's proof-side cost (`ticket-proof-cost.md`,
   currently in an unmerged PR) into one per-sample total once both are on
   the same base revision
-- the two pre-existing dependency-path fixes this measurement needed to
-  build at all — `Cargo.toml` pinned `bbg = "0.2"`, `zheng = "0.3"`, and
-  `tape = { package = "cyber-tape", path = "../tape/impl/rust" }`, none of
-  which resolve against the current sibling checkouts (`bbg` is at 0.3.0,
-  `zheng` at 0.4.0, and the `tape` repo itself was renamed to `tade`); this
-  PR carries the fix so this benchmark and its own tests build, matching
-  the same fix already carried independently by the other open `foculus`
-  launch PRs (#6–#13), which is why they will collide on this file once
-  one of them merges
 - a multi-threaded sample rate (the mining loop runs many workers in
   parallel in production); this measures one worker's serial throughput
   only, the unit the per-cluster difficulty schedule prices

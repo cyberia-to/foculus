@@ -8,7 +8,7 @@
 //!
 //! A settlement ticket sample is `try_settlement_ticket`: one ordering draw
 //! plus `settlement::marginals`, the tri-kernel recompute over the ε-support
-//! (specs/fold-mining.md §7). This binary greps that recompute's throughput
+//! (specs/fold-mining.md §7). This binary measures that recompute's throughput
 //! across growing support sizes, and its power draw via a streaming
 //! `powermetrics` sampler (the same technique as `xena-power`), so the two
 //! combine into joules/sample. It answers the "what hardware wins" question
@@ -52,7 +52,9 @@ fn contribs() -> Vec<Contribution> {
 // powermetrics streamer (pattern: xena/crates/xena-bench/src/power.rs)
 // ----------------------------------------------------------------------------
 
-fn spawn_powermetrics() -> Option<(std::process::Child, Arc<Mutex<Vec<(Instant, u32)>>>, Arc<AtomicBool>)> {
+type PowerSamples = Arc<Mutex<Vec<(Instant, u32)>>>;
+
+fn spawn_powermetrics() -> Option<(std::process::Child, PowerSamples, Arc<AtomicBool>)> {
     let mut child = Command::new("sudo")
         .args(["-n", "powermetrics", "--samplers", "cpu_power", "-i", "500"])
         .stdout(Stdio::piped())
@@ -60,7 +62,7 @@ fn spawn_powermetrics() -> Option<(std::process::Child, Arc<Mutex<Vec<(Instant, 
         .spawn()
         .ok()?;
 
-    let samples: Arc<Mutex<Vec<(Instant, u32)>>> = Arc::new(Mutex::new(Vec::new()));
+    let samples: PowerSamples = Arc::new(Mutex::new(Vec::new()));
     let stop = Arc::new(AtomicBool::new(false));
     let stdout = child.stdout.take()?;
     let samples_w = Arc::clone(&samples);
@@ -106,7 +108,7 @@ struct Row {
     watts: Option<f64>,
 }
 
-fn measure(support: usize, duration: Duration, power: &Option<(Arc<Mutex<Vec<(Instant, u32)>>>,)>) -> Row {
+fn measure(support: usize, duration: Duration, power: Option<&PowerSamples>) -> Row {
     let base = ring(support);
     let c = contribs();
     let beacon = h(0xBEEF);
@@ -128,7 +130,7 @@ fn measure(support: usize, duration: Duration, power: &Option<(Arc<Mutex<Vec<(In
     let t1 = Instant::now();
     let secs = (t1 - t0).as_secs_f64();
 
-    let watts = power.as_ref().and_then(|(s,)| {
+    let watts = power.and_then(|s| {
         let snap = s.lock().unwrap();
         mean_watts_in_window(&snap, t0, t1)
     });
@@ -136,32 +138,52 @@ fn measure(support: usize, duration: Duration, power: &Option<(Arc<Mutex<Vec<(In
     Row { support, samples_per_sec: attempts as f64 / secs, watts }
 }
 
-fn main() {
-    let args: Vec<String> = std::env::args().collect();
+const USAGE: &str = "usage: hardware_profile [--secs N] [--supports 8,64,512,4096]";
+
+fn parse_args() -> Result<(u64, Vec<usize>), String> {
     let mut secs: u64 = 5;
     let mut supports: Vec<usize> = vec![8, 64, 512, 4096];
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--secs" => { secs = args[i + 1].parse().unwrap(); i += 2; }
-            "--supports" => { supports = args[i + 1].split(',').filter_map(|s| s.trim().parse().ok()).collect(); i += 2; }
-            other => { eprintln!("unknown arg: {other}"); std::process::exit(2); }
+    let mut args = std::env::args().skip(1);
+    while let Some(flag) = args.next() {
+        let value = args.next().ok_or_else(|| format!("{flag} needs a value\n{USAGE}"))?;
+        match flag.as_str() {
+            "--secs" => secs = value.parse().map_err(|e| format!("--secs {value}: {e}"))?,
+            "--supports" => {
+                supports = value
+                    .split(',')
+                    .map(|s| s.trim().parse().map_err(|e| format!("--supports {value}: {e}")))
+                    .collect::<Result<_, _>>()?;
+            }
+            other => return Err(format!("unknown arg: {other}\n{USAGE}")),
         }
     }
+    if secs == 0 || supports.is_empty() {
+        return Err(format!("nothing to measure\n{USAGE}"));
+    }
+    Ok((secs, supports))
+}
+
+fn main() {
+    let (secs, supports) = match parse_args() {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(2);
+        }
+    };
 
     println!("foculus hardware_profile — samples/s and W per ε-support size, {}s/point", secs);
 
     let pm = spawn_powermetrics();
-    let power_handle = pm.as_ref().map(|(_, s, _)| (Arc::clone(s),));
+    let power_samples = pm.as_ref().map(|(_, s, _)| s);
     if pm.is_none() {
         eprintln!("note: powermetrics unavailable (needs passwordless `sudo -n powermetrics`) — reporting samples/s only");
     } else {
         thread::sleep(Duration::from_secs(2)); // let the streamer fill its first samples
     }
 
-    let mut rows = Vec::new();
     for &support in &supports {
-        let row = measure(support, Duration::from_secs(secs), &power_handle);
+        let row = measure(support, Duration::from_secs(secs), power_samples);
         match row.watts {
             Some(w) => println!(
                 "  support={:<6} {:>10.1} samples/s   {:>5.2}W   {:>8.3} mJ/sample",
@@ -169,7 +191,6 @@ fn main() {
             ),
             None => println!("  support={:<6} {:>10.1} samples/s", row.support, row.samples_per_sec),
         }
-        rows.push(row);
     }
 
     if let Some((mut child, _samples, stop)) = pm {
