@@ -37,6 +37,24 @@ pub fn easy_target() -> u64 {
     u64::MAX
 }
 
+/// Per-cluster settle target, banded by contributor count (specs/fold-mining.md
+/// "settlement difficulty").
+///
+/// A settlement attempt's cost (`settlement::marginals`) is linear in the
+/// cluster's contributor count `n_contrib`, so a flat target gives every
+/// cluster equal win probability per attempt but not equal win probability
+/// per unit of wall-clock time: a large cluster spends proportionally longer
+/// per attempt and under-samples within the settlement window. Scaling the
+/// target linearly with `n_contrib` against a baseline `base_n` keeps
+/// expected time-to-win constant across cluster sizes. Saturates at
+/// `u64::MAX` instead of overflowing for clusters far above the baseline.
+pub fn banded_target(base_target: u64, n_contrib: usize, base_n: usize) -> u64 {
+    let base_n = base_n.max(1) as u128;
+    let n_contrib = n_contrib.max(1) as u128;
+    let scaled = (base_target as u128).saturating_mul(n_contrib) / base_n;
+    scaled.min(u64::MAX as u128) as u64
+}
+
 /// Cluster id binding (claims_root or explicit cluster particle).
 pub type ClusterId = [u8; 32];
 
@@ -640,5 +658,26 @@ mod tests {
         // ε=0.1, δ=0.01 → ln(200)/(2*0.01) ≈ 5.3/0.02 ≈ 265
         let k = ClusterAcc::k_min(0.1, 0.01);
         assert!(k > 100 && k < 400);
+    }
+
+    #[test]
+    fn banded_target_scales_linearly_with_cluster_size() {
+        let base = 1u64 << 32;
+        assert_eq!(banded_target(base, 8, 8), base);
+        assert_eq!(banded_target(base, 16, 8), base * 2);
+        assert_eq!(banded_target(base, 4, 8), base / 2);
+    }
+
+    #[test]
+    fn banded_target_saturates_instead_of_overflowing() {
+        let t = banded_target(u64::MAX / 2, 1_000_000, 1);
+        assert_eq!(t, u64::MAX);
+    }
+
+    #[test]
+    fn banded_target_floors_zero_sizes_to_one() {
+        // n_contrib=0 or base_n=0 must not divide by zero or panic.
+        assert_eq!(banded_target(1024, 0, 8), 128);
+        assert_eq!(banded_target(1024, 8, 0), 1024 * 8);
     }
 }
