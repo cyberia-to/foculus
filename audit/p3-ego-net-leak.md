@@ -78,7 +78,7 @@ nothing by itself. remains, in order:
 3. replace `replay_marginals`'s exact-match check with proof verification;
    `SettlementTicket.marginals` stops being a field anyone but the
    producing miner holds.
-4. re-audit `ClusterAcc`/fold-mining for any other point for a full
+4. re-audit `ClusterAcc`/fold-mining for any other point where a full
    per-ticket vector crosses a trust boundary in the clear.
 
 ## see also
