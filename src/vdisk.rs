@@ -300,12 +300,12 @@ impl VDiskManager {
             ));
         }
 
-        Ok(erasure::decode(
+        erasure::decode(
             &available_shards,
             entry.k,
             entry.n,
             entry.original_len,
-        ))
+        )
     }
 
     /// List all files in the registry.
