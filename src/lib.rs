@@ -43,6 +43,7 @@ pub mod finality_evidence;
 pub mod focus;
 pub mod fork;
 pub mod beacon;
+pub mod cluster;
 pub mod epoch;
 pub mod epoch_cert;
 pub mod live;
@@ -64,6 +65,7 @@ pub use beacon::{
     advance_empty, beacon, claims_root, collect_signal_outputs, open_beacon, signal_vdf_root,
     verify_beacon, BeaconArtifact, DEFAULT_OUTER_T, GENESIS_PREV, TEST_OUTER_T,
 };
+pub use cluster::{claim_particles, cluster_id, epsilon_support, partition_into_clusters, Adjacency};
 pub use epoch::{verify_live_receipt, EpochError, EpochPhase, EpochRunner};
 pub use epoch_cert::{
     issue_epoch_cert, verify_epoch_cert, verify_phi_on_cert, EpochCertificate, SettleVerifyInputs,
