@@ -178,7 +178,14 @@ fn deserialize_signal(buf: &[u8]) -> Option<Signal> {
     let prev = take32(buf, &mut p)?;
     let height = take_u64(buf, &mut p)?;
     let count = take_u32(buf, &mut p)? as usize;
-    let mut links = Vec::with_capacity(count);
+    // Not `Vec::with_capacity(count)`: `count` is an attacker-controlled u32
+    // read before any byte of the links themselves is verified to exist, so
+    // a short payload declaring a huge count would drive an allocation sized
+    // by a number that was never backed by real data. `push` in the loop
+    // below grows on demand and the loop itself is bounded by `take32`/
+    // `take_u64` returning `None` on the first short read, same as
+    // `box_moves` and `delta_pi` below already do.
+    let mut links = Vec::new();
     for _ in 0..count {
         links.push(CyberlinkRecord {
             neuron: take32(buf, &mut p)?,
@@ -362,6 +369,20 @@ mod tests {
     fn decode_rejects_non_signal_bytes() {
         assert!(decode_signal_frame(b"not a tape frame").is_none());
         assert!(decode_signal_frame(&[]).is_none());
+    }
+
+    #[test]
+    fn deserialize_signal_rejects_huge_link_count_without_preallocating() {
+        // neuron(32) + step(8) + prev(32) + height(8), then a link count of
+        // u32::MAX with not one byte of link data behind it. Before the fix
+        // this drove `Vec::with_capacity(u32::MAX as usize)` — a payload of
+        // 84 bytes claiming gigabytes of `CyberlinkRecord`s — an
+        // attacker-triggered allocation abort on the radio ingress path
+        // (`decode_signal_frame`/`decode_signals`/`decode_events`), not a
+        // graceful decode failure.
+        let mut buf = vec![0u8; 32 + 8 + 32 + 8];
+        buf.extend_from_slice(&u32::MAX.to_le_bytes());
+        assert!(deserialize_signal(&buf).is_none());
     }
 
     #[test]
