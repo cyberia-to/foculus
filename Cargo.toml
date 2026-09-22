@@ -22,9 +22,10 @@ net = ["dep:iroh", "dep:tokio", "dep:tracing-subscriber"]
 [dependencies]
 nebu = { package = "strata-nebu", version = "0.1", path = "../strata/nebu/rs" }
 cyber-hemera = { version = "0.3", path = "../hemera/rs" }
-bbg = { version = "0.2", path = "../bbg/rs" }
-zheng = { version = "0.3", path = "../zheng/rs" }
-tape = { package = "cyber-tape", version = "0.1", path = "../tape/impl/rust" }
+bbg = { version = "0.3", path = "../bbg/rs" }
+zheng = { version = "0.4", path = "../zheng/rs" }
+lens = { package = "cyber-lens", version = "0.2.0", path = "../lens/src" }
+tade = { version = "0.1", path = "../tade/impl/rust" }
 tru = { package = "cyber-tru", version = "0.1.1", path = "../tru/rs" }
 tok = { package = "cyber-tok", version = "0.1.1", path = "../tok/rs" }
 # mdns is feature-gated in crates.io iroh — required for SettleRadio / SyncNode
