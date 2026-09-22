@@ -88,6 +88,20 @@ one verified proof per cluster, no earlier.
 
 `fold-target` adjusts per epoch so the tree over $k_{\text{miners}}$ self-accumulators converges to a root within the fold window. difficulty is ratio-policed against the settlement difficulty: thin settlement work → fewer input pairs → fold-target loosens so the tree still completes. a fold step exercises the same four GFP primitives (fma, ntt, p2r, lut) as a marginal sample, so difficulty has a physical floor set by hardware throughput, not a synthetic puzzle.
 
+## withholding bias
+
+[[reward specification]] §7 "Residual: withholding" argues informally that a miner who is also a cluster contender can withhold (never publish) a winning ticket whose marginal would lower its own share, and that the injectable bias this buys is bounded by the withholder's share of settlement compute. this section makes that bound exact.
+
+let a cluster's settlement pool have $T$ winning tickets with true mean $\mu = \frac{1}{T}\sum_n m(n)$ and minimum sample $m_{\min} = \min_n m(n)$ for the withholder's own contributor index. a withholder controlling compute share $q$ of the pool (so $|A| \approx qT$ tickets pass through its hands before publication) discards exactly the subset of its own tickets below $\mu$ — the only freedom §7 grants it, since it cannot fabricate a ticket's content, only abstain. writing $D$ for the discarded set, the published pool has $T' = T - |D|$ samples and mean
+
+$$\mu' \;=\; \frac{T\mu - \sum_{n \in D} m(n)}{T - |D|} \;=\; \mu + \frac{\sum_{n\in D}(\mu - m(n))}{T'}.$$
+
+every discarded sample satisfies $m(n) < \mu$ by construction, so each term $(\mu - m(n))$ is positive and bounded above by $(\mu - m_{\min})$; the discarded count is bounded above by the withholder's own share, $|D| \le qT$; and $T' \ge T(1-q)$. substituting the three bounds:
+
+$$\text{bias}(q) \;=\; \mu' - \mu \;\le\; (\mu - m_{\min})\cdot\frac{q}{1-q}.$$
+
+the bound is linear in $q$ for small $q$ — negligible for a minority withholder, unbounded only as $q \to 1$, i.e. only once the withholder already controls the whole cluster's settlement compute, at which point §7's own observation applies: a majority already breaks consensus by other means. `tests/withholding_bias.rs` grinds a real ticket pool with `grind_settlement`, simulates the withholding policy above at $q \in \{0.05, 0.1, 0.25, 0.5\}$, and checks the measured bias against this bound directly — see `audit/withholding-bias.md` for the numbers. pricing the forfeit (a withheld ticket loses its subsidy, calibrated above the share-gain this bound quantifies) and role separation (a miner does not settle a cluster it contends in) remain open implementation work; this section closes only the size of the bias they are pricing against.
+
 ## payment
 
 fold steps are paid as tier-2 settlement subsidy from the per-epoch security budget ([[reward specification]] §8). a winning fold ticket earns from the same pool as a winning settlement ticket. the allocation is:
