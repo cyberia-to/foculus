@@ -90,7 +90,7 @@ fn scale_10_devices_100_files() {
                 k
             );
 
-            let recovered = erasure::decode(&available, k, n, original_data.len());
+            let recovered = erasure::decode(&available, k, n, original_data.len()).unwrap();
             assert_eq!(
                 &recovered, original_data,
                 "file {} corrupted after losing devices {:?}",
@@ -124,7 +124,7 @@ fn cascading_failure_8_devices() {
         let available: Vec<erasure::Shard> = shards[..surviving_count].to_vec();
 
         if surviving_count >= k {
-            let recovered = erasure::decode(&available, k, n, data.len());
+            let recovered = erasure::decode(&available, k, n, data.len()).unwrap();
             assert_eq!(
                 &recovered,
                 &data[..],
@@ -132,10 +132,8 @@ fn cascading_failure_8_devices() {
                 surviving_count
             );
         } else if surviving_count > 0 {
-            // Should panic (insufficient shards).
-            let result = std::panic::catch_unwind(|| {
-                erasure::decode(&available, k, n, data.len());
-            });
+            // Should return Err (insufficient shards), not panic.
+            let result = erasure::decode(&available, k, n, data.len());
             assert!(
                 result.is_err(),
                 "should fail with only {} of {} required shards",
@@ -156,15 +154,13 @@ fn cascading_failure_high_k() {
     // Works with 8,7,6,5,4 surviving. Fails with 3,2,1.
     for keep in (k..=n).rev() {
         let available: Vec<erasure::Shard> = shards[..keep].to_vec();
-        let recovered = erasure::decode(&available, k, n, data.len());
+        let recovered = erasure::decode(&available, k, n, data.len()).unwrap();
         assert_eq!(recovered, data, "failed with {} shards", keep);
     }
 
-    // 3 shards (k=4): fails.
-    let result = std::panic::catch_unwind(|| {
-        let short: Vec<erasure::Shard> = shards[..3].to_vec();
-        erasure::decode(&short, k, n, data.len());
-    });
+    // 3 shards (k=4): should return Err, not panic.
+    let short: Vec<erasure::Shard> = shards[..3].to_vec();
+    let result = erasure::decode(&short, k, n, data.len());
     assert!(result.is_err());
 }
 
@@ -621,7 +617,7 @@ fn exhaustive_4_of_8_all_70_subsets() {
 
     for subset in &subsets {
         let partial: Vec<erasure::Shard> = subset.iter().map(|&i| shards[i].clone()).collect();
-        let recovered = erasure::decode(&partial, k, n, data.len());
+        let recovered = erasure::decode(&partial, k, n, data.len()).unwrap();
         assert_eq!(
             recovered, data,
             "FAILED: (4,8) subset {:?} on 8KB data",
@@ -645,7 +641,7 @@ fn exhaustive_2_of_8_all_28_subsets() {
 
     for subset in &subsets {
         let partial: Vec<erasure::Shard> = subset.iter().map(|&i| shards[i].clone()).collect();
-        let recovered = erasure::decode(&partial, k, n, data.len());
+        let recovered = erasure::decode(&partial, k, n, data.len()).unwrap();
         assert_eq!(recovered, data, "FAILED: (2,8) subset {:?}", subset);
     }
 }
@@ -666,7 +662,7 @@ fn integrity_every_byte_length_0_to_256() {
         let shards = erasure::encode(&data, k, n);
 
         // Full roundtrip.
-        let recovered = erasure::decode(&shards, k, n, data.len());
+        let recovered = erasure::decode(&shards, k, n, data.len()).unwrap();
         assert_eq!(recovered, data, "FAILED at size {}", size);
 
         // Partial (drop shard 0 and 1).
@@ -674,7 +670,7 @@ fn integrity_every_byte_length_0_to_256() {
             .into_iter()
             .filter(|s| s.index >= 2)
             .collect();
-        let recovered2 = erasure::decode(&partial, k, n, data.len());
+        let recovered2 = erasure::decode(&partial, k, n, data.len()).unwrap();
         assert_eq!(recovered2, data, "FAILED partial at size {}", size);
     }
 

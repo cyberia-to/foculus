@@ -59,21 +59,58 @@ pub fn encode(data: &[u8], k: usize, n: usize) -> Vec<Shard> {
 }
 
 /// Decode original data from any k shards out of n.
-pub fn decode(shards: &[Shard], k: usize, n: usize, original_len: usize) -> Vec<u8> {
-    assert!(n.is_power_of_two());
-    assert!(shards.len() >= k, "need at least k shards to reconstruct");
+///
+/// Rejects a duplicate or out-of-range shard index instead of interpolating
+/// through it: Lagrange interpolation needs `k` distinct evaluation points,
+/// and a repeated point makes the denominator zero. `Goldilocks::inv` sends
+/// zero to zero rather than panicking, so an unchecked duplicate would not
+/// crash — it would silently fold that shard's contribution to zero and
+/// return corrupted data.
+pub fn decode(
+    shards: &[Shard],
+    k: usize,
+    n: usize,
+    original_len: usize,
+) -> Result<Vec<u8>, String> {
+    if !n.is_power_of_two() {
+        return Err(format!("n={n} must be a power of 2"));
+    }
+    if shards.len() < k {
+        return Err(format!(
+            "need at least {k} shards to reconstruct, got {}",
+            shards.len()
+        ));
+    }
+    if shards.is_empty() {
+        return Err("no shards provided".to_string());
+    }
 
     let num_groups = shards[0].data.len();
 
     // Fast path: all n shards present.
     if shards.len() == n && is_complete(shards, n) {
-        return decode_full(shards, k, n, num_groups, original_len);
+        return Ok(decode_full(shards, k, n, num_groups, original_len));
     }
 
     // General path: Lagrange interpolation from k evaluations.
     let omega = Goldilocks::new(7).exp((P - 1) / n as u64);
 
     let available: Vec<&Shard> = shards.iter().take(k).collect();
+
+    let mut seen = vec![false; n];
+    for s in &available {
+        if s.index >= n {
+            return Err(format!("shard index {} out of range for n={n}", s.index));
+        }
+        if seen[s.index] {
+            return Err(format!("duplicate shard index {}", s.index));
+        }
+        seen[s.index] = true;
+        if s.data.len() != num_groups {
+            return Err("shards disagree on group count".to_string());
+        }
+    }
+
     let eval_points: Vec<Goldilocks> = available
         .iter()
         .map(|s| omega.exp(s.index as u64))
@@ -93,7 +130,7 @@ pub fn decode(shards: &[Shard], k: usize, n: usize, original_len: usize) -> Vec<
         }
     }
 
-    elements_to_bytes(&result_elements, original_len)
+    Ok(elements_to_bytes(&result_elements, original_len))
 }
 
 /// Fast decode when all n shards are present — just inverse NTT.
@@ -213,7 +250,7 @@ mod tests {
         let n = 4;
         let shards = encode(data, k, n);
         assert_eq!(shards.len(), n);
-        let recovered = decode(&shards, k, n, data.len());
+        let recovered = decode(&shards, k, n, data.len()).unwrap();
         assert_eq!(&recovered, data);
     }
 
@@ -230,7 +267,7 @@ mod tests {
             .collect();
         assert_eq!(partial.len(), k);
 
-        let recovered = decode(&partial, k, n, data.len());
+        let recovered = decode(&partial, k, n, data.len()).unwrap();
         assert_eq!(&recovered, &data[..]);
     }
 
@@ -240,7 +277,7 @@ mod tests {
         let k = 4;
         let n = 4;
         let shards = encode(data, k, n);
-        let recovered = decode(&shards, k, n, data.len());
+        let recovered = decode(&shards, k, n, data.len()).unwrap();
         assert_eq!(&recovered, data);
     }
 
@@ -256,7 +293,7 @@ mod tests {
             .filter(|s| s.index == 1 || s.index == 3)
             .collect();
 
-        let recovered = decode(&partial, k, n, data.len());
+        let recovered = decode(&partial, k, n, data.len()).unwrap();
         assert_eq!(recovered, data);
     }
 
@@ -275,7 +312,7 @@ mod tests {
                     .filter(|s| s.index == i || s.index == j)
                     .cloned()
                     .collect();
-                let recovered = decode(&partial, k, n, data.len());
+                let recovered = decode(&partial, k, n, data.len()).unwrap();
                 assert_eq!(
                     &recovered,
                     &data[..],
@@ -291,5 +328,49 @@ mod tests {
         let elems = bytes_to_elements(data);
         let back = elements_to_bytes(&elems, data.len());
         assert_eq!(&back, &data[..]);
+    }
+
+    /// Before the fix, a duplicate shard index reached Lagrange interpolation
+    /// with a repeated evaluation point. `Goldilocks::inv(0) == 0`, so the
+    /// singular system did not panic — it silently returned wrong bytes.
+    #[test]
+    fn decode_rejects_duplicate_shard_index() {
+        let data = b"duplicate shard indices must be rejected, not silently corrupted";
+        let k = 2;
+        let n = 4;
+        let mut shards = encode(data, k, n);
+        // Two shards, same index: same failure shape a flaky/duplicating peer send produces.
+        let dup = shards[0].clone();
+        shards.truncate(1);
+        shards.push(dup);
+
+        let result = decode(&shards, k, n, data.len());
+        assert!(
+            result.is_err(),
+            "duplicate index must not decode to a result"
+        );
+    }
+
+    #[test]
+    fn decode_rejects_out_of_range_shard_index() {
+        let data = b"an out-of-range shard index must be rejected";
+        let k = 2;
+        let n = 4;
+        let mut shards = encode(data, k, n);
+        shards[0].index = n; // one past the valid [0, n) range
+        shards.truncate(k);
+
+        let result = decode(&shards, k, n, data.len());
+        assert!(
+            result.is_err(),
+            "out-of-range index must not decode to a result"
+        );
+    }
+
+    #[test]
+    fn decode_rejects_empty_shards() {
+        let shards: Vec<Shard> = Vec::new();
+        // k=0 lets the length check pass so the emptiness check is what's exercised.
+        assert!(decode(&shards, 0, 4, 0).is_err());
     }
 }

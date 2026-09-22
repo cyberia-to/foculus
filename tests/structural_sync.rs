@@ -47,7 +47,7 @@ fn erasure_all_configs_all_subsets() {
                     .iter()
                     .map(|&i| shards[i].clone())
                     .collect();
-                let recovered = erasure::decode(&partial, k, n, data.len());
+                let recovered = erasure::decode(&partial, k, n, data.len()).unwrap();
                 assert_eq!(
                     recovered, data,
                     "FAILED: config ({},{}), size {}, subset {:?}",
@@ -68,9 +68,8 @@ fn erasure_all_configs_all_subsets() {
     );
 }
 
-/// Losing more than n-k shards must not silently corrupt — decode should still
-/// produce output but it will be wrong. The caller checks the hash.
-/// This test verifies the system doesn't panic on insufficient shards.
+/// Losing more than n-k shards must fail gracefully with Err, not panic
+/// and not silently return corrupted output.
 #[test]
 fn erasure_insufficient_shards_fails_gracefully() {
     let data = b"test insufficient shards";
@@ -78,12 +77,10 @@ fn erasure_insufficient_shards_fails_gracefully() {
     let n = 4;
     let shards = erasure::encode(data, k, n);
 
-    // Only 1 shard (need 2): should panic on assert.
-    let result = std::panic::catch_unwind(|| {
-        let partial = vec![shards[0].clone()];
-        erasure::decode(&partial, k, n, data.len());
-    });
-    assert!(result.is_err(), "should panic with insufficient shards");
+    // Only 1 shard (need 2): should return Err.
+    let partial = vec![shards[0].clone()];
+    let result = erasure::decode(&partial, k, n, data.len());
+    assert!(result.is_err(), "should fail with insufficient shards");
 }
 
 /// Large data: 10MB erasure roundtrip.
@@ -106,7 +103,7 @@ fn erasure_large_data_10mb() {
         .collect();
 
     let decode_start = Instant::now();
-    let recovered = erasure::decode(&partial, k, n, data.len());
+    let recovered = erasure::decode(&partial, k, n, data.len()).unwrap();
     let decode_time = decode_start.elapsed();
 
     assert_eq!(recovered.len(), data.len());
@@ -391,7 +388,7 @@ fn e2e_full_pipeline() {
             for loss in 0..=max_loss {
                 let remaining: Vec<erasure::Shard> = shards[loss..].to_vec();
                 if remaining.len() >= k {
-                    let recovered = erasure::decode(&remaining, k, n, data.len());
+                    let recovered = erasure::decode(&remaining, k, n, data.len()).unwrap();
                     assert_eq!(
                         recovered, data,
                         "FAILED: ({},{}) size={} loss={}",
@@ -442,14 +439,12 @@ fn e2e_three_devices_lifecycle() {
         device_b[0].clone(),
         device_c[0].clone(),
     ];
-    let recovered = erasure::decode(&survivors, k, n, data.len());
+    let recovered = erasure::decode(&survivors, k, n, data.len()).unwrap();
     assert_eq!(&recovered, &data[..], "failed to recover after device A loss");
 
     // Step 5: Device B dies. Only C (shard 3) → cannot reconstruct (need k=2).
-    let result = std::panic::catch_unwind(|| {
-        let only_c = vec![device_c[0].clone()];
-        erasure::decode(&only_c, k, n, data.len());
-    });
+    let only_c = vec![device_c[0].clone()];
+    let result = erasure::decode(&only_c, k, n, data.len());
     assert!(result.is_err(), "should fail with only 1 of 2 required shards");
 
     // Step 6: Device A comes back with shards 0,1 + C has shard 3 → reconstruct.
@@ -457,7 +452,7 @@ fn e2e_three_devices_lifecycle() {
         device_a[0].clone(),
         device_c[0].clone(),
     ];
-    let recovered2 = erasure::decode(&restored, k, n, data.len());
+    let recovered2 = erasure::decode(&restored, k, n, data.len()).unwrap();
     assert_eq!(&recovered2, &data[..], "failed to recover after A returns");
 }
 
@@ -514,7 +509,7 @@ fn bench_erasure_throughput() {
             let partial: Vec<erasure::Shard> = shards.into_iter().take(k).collect();
 
             let start = Instant::now();
-            let recovered = erasure::decode(&partial, k, n, data.len());
+            let recovered = erasure::decode(&partial, k, n, data.len()).unwrap();
             let decode_ms = start.elapsed().as_secs_f64() * 1000.0;
 
             assert_eq!(recovered, data);

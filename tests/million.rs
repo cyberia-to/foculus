@@ -195,7 +195,7 @@ fn chaos() {
                 }
 
                 if available.len() >= truth.k {
-                    let recovered = erasure::decode(&available, truth.k, truth.n, truth.data.len());
+                    let recovered = erasure::decode(&available, truth.k, truth.n, truth.data.len()).unwrap();
                     assert_eq!(recovered, truth.data,
                         "DATA LOSS op {}: file {} corrupted (had {} shards)", op, name, available.len());
                     if available.len() == truth.n { s.get_ok += 1; } else { s.get_degraded += 1; }
