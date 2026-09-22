@@ -15,10 +15,6 @@ readme = "README.md"
 name = "foculus"
 path = "src/bin/main.rs"
 
-[[bin]]
-name = "hardware_profile"
-path = "src/bin/hardware_profile.rs"
-
 [features]
 default = []
 net = ["dep:iroh", "dep:tokio", "dep:tracing-subscriber"]
@@ -28,7 +24,8 @@ nebu = { package = "strata-nebu", version = "0.1", path = "../strata/nebu/rs" }
 cyber-hemera = { version = "0.3", path = "../hemera/rs" }
 bbg = { version = "0.3", path = "../bbg/rs" }
 zheng = { version = "0.4", path = "../zheng/rs" }
-tape = { package = "tade", version = "0.1", path = "../tade/impl/rust" }
+lens = { package = "cyber-lens", version = "0.2.0", path = "../lens/src" }
+tade = { version = "0.1", path = "../tade/impl/rust" }
 tru = { package = "cyber-tru", version = "0.1.1", path = "../tru/rs" }
 tok = { package = "cyber-tok", version = "0.1.1", path = "../tok/rs" }
 # mdns is feature-gated in crates.io iroh — required for SettleRadio / SyncNode
