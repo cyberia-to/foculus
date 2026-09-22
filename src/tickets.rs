@@ -678,6 +678,6 @@ mod tests {
     fn banded_target_floors_zero_sizes_to_one() {
         // n_contrib=0 or base_n=0 must not divide by zero or panic.
         assert_eq!(banded_target(1024, 0, 8), 128);
-        assert_eq!(banded_target(1024, 8, 0), u64::MAX.min(1024 * 8));
+        assert_eq!(banded_target(1024, 8, 0), 1024 * 8);
     }
 }
