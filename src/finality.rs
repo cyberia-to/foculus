@@ -47,8 +47,18 @@ impl Domain {
 
     /// Construct directly from parallel (particle, φ*) vectors — used by callers
     /// that already hold a domain's focus, and by tests.
+    ///
+    /// Panics if the two vectors are not the same length: `mean`/`variance` treat
+    /// `focus.len()` as the domain size while `focus_of` indexes `focus` by a
+    /// position found in `particles`, so a length mismatch either skews the mean
+    /// over phantom entries or panics later at an unrelated call site instead of
+    /// here, at the point of construction.
     pub fn from_focus(particles: Vec<Particle>, focus: Vec<Fx>) -> Domain {
-        debug_assert_eq!(particles.len(), focus.len());
+        assert_eq!(
+            particles.len(),
+            focus.len(),
+            "Domain::from_focus: particles and focus must be parallel vectors"
+        );
         Domain { particles, focus }
     }
 
@@ -259,5 +269,11 @@ mod tests {
             finalizes(fx(5, 100), &d, fx(3, 1000), gap, kappa_d, c, kp),
             Finality::Pending
         );
+    }
+
+    #[test]
+    #[should_panic(expected = "particles and focus must be parallel vectors")]
+    fn from_focus_rejects_mismatched_lengths_in_release_too() {
+        Domain::from_focus(vec![p(1), p(2)], vec![fx(1, 2)]);
     }
 }
