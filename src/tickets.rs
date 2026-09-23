@@ -450,6 +450,33 @@ pub fn assemble_fold_tree(
     level.into_iter().next().unwrap_or_default()
 }
 
+/// specs/rewards.md §7 "Residual: withholding": a settlement miner that is
+/// also a cluster contender can withhold a winning ticket that would lower
+/// its own share; the injectable bias is bounded by its compute share `q`:
+/// `bias(q) <= (mean - min) * q / (1 - q)`, where `range` is `mean - min`
+/// over the cluster's published marginal shares (measured in
+/// foculus/audit/withholding-bias.md).
+///
+/// `q` must be in `[0, 1)`; `q >= 1` is a majority attacker, which already
+/// breaks consensus by other means and is out of scope for this bound.
+pub fn withholding_bias_bound(range: Fx, q: Fx) -> Fx {
+    debug_assert!(
+        q < Fx::ONE,
+        "compute share must be < 1; q >= 1 is a majority attack, out of scope for this bound"
+    );
+    range * q.div(Fx::ONE - q)
+}
+
+/// §7 prices the cheap deterrent: "a withheld ticket forfeits its subsidy;
+/// calibrate so the forfeit exceeds the share-gain." `withholding_bias_bound`
+/// gives the maximum share-gain a withholder can buy at compute share `q`;
+/// scaled by the cluster's total settlement value it becomes a token amount.
+/// Returns true iff `ticket_subsidy` forfeits more than that amount, i.e. the
+/// deterrent is priced correctly for this cluster.
+pub fn forfeit_deters_withholding(ticket_subsidy: Fx, range: Fx, q: Fx, cluster_value: Fx) -> bool {
+    ticket_subsidy > withholding_bias_bound(range, q) * cluster_value
+}
+
 fn acc_commitment(acc: &ClusterAcc) -> [u8; 32] {
     let mut buf = Vec::with_capacity(ACC_DOMAIN.len() + 16 + acc.sum_m.len() * 8 + acc.seen.len() * 40);
     buf.extend_from_slice(ACC_DOMAIN);
@@ -640,5 +667,55 @@ mod tests {
         // ε=0.1, δ=0.01 → ln(200)/(2*0.01) ≈ 5.3/0.02 ≈ 265
         let k = ClusterAcc::k_min(0.1, 0.01);
         assert!(k > 100 && k < 400);
+    }
+
+    #[test]
+    fn withholding_bias_bound_matches_measured_shape() {
+        // foculus/audit/withholding-bias.md: q=0.05 bound≈0.000106,
+        // q=0.50 bound≈0.002012, range=mean-min from that run ≈ 0.002012.
+        let range = Fx::from_ratio(2012, 1_000_000);
+        let bound_05 = withholding_bias_bound(range, Fx::from_ratio(5, 100));
+        let bound_50 = withholding_bias_bound(range, Fx::from_ratio(50, 100));
+        assert!(bound_05 > Fx::ZERO);
+        assert!(
+            bound_50 > bound_05,
+            "bound must grow with compute share q, per (mean-min)*q/(1-q)"
+        );
+    }
+
+    #[test]
+    fn withholding_bias_bound_is_zero_at_zero_share() {
+        let range = Fx::from_ratio(2012, 1_000_000);
+        assert_eq!(withholding_bias_bound(range, Fx::ZERO), Fx::ZERO);
+    }
+
+    #[test]
+    fn forfeit_below_bound_does_not_deter() {
+        let range = Fx::from_ratio(2012, 1_000_000);
+        let q = Fx::from_ratio(25, 100);
+        let cluster_value = Fx::from_int(1_000_000);
+        let bound_value = withholding_bias_bound(range, q) * cluster_value;
+        let underpriced = bound_value - Fx::from_int(1);
+        assert!(!forfeit_deters_withholding(
+            underpriced,
+            range,
+            q,
+            cluster_value
+        ));
+    }
+
+    #[test]
+    fn forfeit_above_bound_deters() {
+        let range = Fx::from_ratio(2012, 1_000_000);
+        let q = Fx::from_ratio(25, 100);
+        let cluster_value = Fx::from_int(1_000_000);
+        let bound_value = withholding_bias_bound(range, q) * cluster_value;
+        let overpriced = bound_value + Fx::from_int(1);
+        assert!(forfeit_deters_withholding(
+            overpriced,
+            range,
+            q,
+            cluster_value
+        ));
     }
 }
