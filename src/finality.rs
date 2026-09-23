@@ -48,7 +48,13 @@ impl Domain {
     /// Construct directly from parallel (particle, φ*) vectors — used by callers
     /// that already hold a domain's focus, and by tests.
     pub fn from_focus(particles: Vec<Particle>, focus: Vec<Fx>) -> Domain {
-        debug_assert_eq!(particles.len(), focus.len());
+        assert_eq!(
+            particles.len(),
+            focus.len(),
+            "Domain::from_focus: particles ({}) and focus ({}) must be parallel",
+            particles.len(),
+            focus.len(),
+        );
         Domain { particles, focus }
     }
 
@@ -221,6 +227,15 @@ mod tests {
         );
         assert!(crosses_threshold(fx(85, 100), &d, fx(3, 2)), "the spike should finalize");
         assert!(!crosses_threshold(fx(5, 100), &d, fx(3, 2)), "background should not");
+    }
+
+    #[test]
+    #[should_panic(expected = "particles (2) and focus (1) must be parallel")]
+    fn from_focus_rejects_mismatched_lengths() {
+        // a mismatched pair must panic at construction, in release builds too —
+        // not only in debug — so a bad caller never reaches `focus_of`'s
+        // position-into-focus indexing with an out-of-range index.
+        Domain::from_focus(vec![p(1), p(2)], vec![fx(1, 2)]);
     }
 
     #[test]
