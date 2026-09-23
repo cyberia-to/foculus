@@ -170,7 +170,10 @@ fn serialize_signal(s: &Signal) -> Vec<u8> {
 }
 
 /// Inverse of [`serialize_signal`]. A little bounded cursor over the payload;
-/// any short read (truncated frame) yields `None` rather than panicking.
+/// any short read (truncated frame) yields `None` rather than panicking. A
+/// box-move commitment tag other than 0/1 is rejected outright rather than
+/// silently read as "no commitment" — the two are not equivalent, and the
+/// latter would let a corrupted or malicious frame drop a real commitment.
 fn deserialize_signal(buf: &[u8]) -> Option<Signal> {
     let mut p = 0usize;
     let neuron = take32(buf, &mut p)?;
@@ -195,11 +198,10 @@ fn deserialize_signal(buf: &[u8]) -> Option<Signal> {
         let count = take_u32(buf, &mut p)? as usize;
         for _ in 0..count {
             let nullifier = take32(buf, &mut p)?;
-            let flag = take_u8(buf, &mut p)?;
-            let commitment = if flag == 1 {
-                Some((take32(buf, &mut p)?, take_u64(buf, &mut p)?))
-            } else {
-                None
+            let commitment = match take_u8(buf, &mut p)? {
+                0 => None,
+                1 => Some((take32(buf, &mut p)?, take_u64(buf, &mut p)?)),
+                _ => return None,
             };
             box_moves.push(crate::BoxMoveRecord {
                 nullifier,
@@ -370,6 +372,46 @@ mod tests {
         let payload = serialize_intent(&i);
         // 32 + 8 + 32 + 64 = 136
         assert_eq!(payload.len(), 136);
+    }
+
+    #[test]
+    fn box_move_with_commitment_round_trips() {
+        let mut s = empty_signal();
+        s.box_moves.push(crate::BoxMoveRecord {
+            nullifier: [5u8; 32],
+            commitment: Some(([6u8; 32], 7)),
+        });
+        let frame = encode_signal_frame(&s);
+        let back = decode_signal_frame(&frame).expect("decodes");
+        assert_eq!(back.box_moves.len(), 1);
+        assert_eq!(back.box_moves[0].nullifier, [5u8; 32]);
+        assert_eq!(back.box_moves[0].commitment, Some(([6u8; 32], 7)));
+    }
+
+    #[test]
+    fn box_move_without_commitment_round_trips() {
+        let mut s = empty_signal();
+        s.box_moves.push(crate::BoxMoveRecord {
+            nullifier: [5u8; 32],
+            commitment: None,
+        });
+        let frame = encode_signal_frame(&s);
+        let back = decode_signal_frame(&frame).expect("decodes");
+        assert_eq!(back.box_moves.len(), 1);
+        assert_eq!(back.box_moves[0].nullifier, [5u8; 32]);
+        assert_eq!(back.box_moves[0].commitment, None);
+    }
+
+    #[test]
+    fn decode_rejects_box_move_with_invalid_commitment_tag() {
+        // header (neuron+step+prev+height) + link count (0) + box_move
+        // count (1) + nullifier (32 zero bytes) + an invalid tag byte.
+        let mut buf = vec![0u8; 32 + 8 + 32 + 8];
+        buf.extend_from_slice(&0u32.to_le_bytes()); // zero links
+        buf.extend_from_slice(&1u32.to_le_bytes()); // one box_move
+        buf.extend_from_slice(&[0u8; 32]); // nullifier
+        buf.push(42); // neither 0 (no commitment) nor 1 (commitment)
+        assert!(deserialize_signal(&buf).is_none());
     }
 }
 
