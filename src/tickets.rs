@@ -310,6 +310,60 @@ pub fn fold_acc(left: &ClusterAcc, right: &ClusterAcc) -> ClusterAcc {
     out
 }
 
+/// Why [`fold_acc_checked`] refused to fold two accumulators.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FoldOverlap {
+    /// Number of `(miner, nonce)` pairs present in both accumulators.
+    NonDisjoint(usize),
+}
+
+/// Fold two accumulators, rejecting overlap instead of mis-summing it.
+///
+/// specs/fold-mining.md requires the fold to be a commutative monoid that
+/// "counts each canonical (id, n) pair once," with a re-submitted nonce
+/// "detected at fold time and discarded." [`fold_acc`]'s overlap branch does
+/// neither: `out.sum_m[i] = left.sum_m[i] + right.sum_m[i]` runs unconditionally,
+/// so `fold_acc(x, x)` silently doubles every `sum_m` entry while `k` stays at
+/// `x.k` — `mean_shares` then returns double the true mean, corrupting the
+/// Shapley-share reward estimate `rewards.rs` mints against. A compact
+/// `ClusterAcc` has no raw per-ticket marginals to subtract back out on
+/// overlap, so there is no safe way to *compute* the right answer here; the
+/// only sound move is to surface the overlap to the caller. In honest
+/// operation two accumulators being folded together are built from disjoint
+/// leaves of the cluster's fold tree, so `Ok` is the expected path and
+/// `NonDisjoint` signals either a replayed ticket or a broken tree assembly.
+pub fn fold_acc_checked(left: &ClusterAcc, right: &ClusterAcc) -> Result<ClusterAcc, FoldOverlap> {
+    let inter = left.seen.intersection(&right.seen).count();
+    if inter > 0 {
+        return Err(FoldOverlap::NonDisjoint(inter));
+    }
+    let n = left.sum_m.len().max(right.sum_m.len());
+    let mut out = ClusterAcc::empty(n);
+    for t in left.seen.iter().chain(right.seen.iter()) {
+        out.seen.insert(*t);
+    }
+    if left.sum_m.len() == right.sum_m.len() && left.sum_m.len() == n {
+        for i in 0..n {
+            out.sum_m[i] = left.sum_m[i] + right.sum_m[i];
+        }
+        out.k = left.k.saturating_add(right.k);
+    } else if left.k >= right.k {
+        out = left.clone();
+        for t in &right.seen {
+            out.seen.insert(*t);
+        }
+        out.k = out.seen.len() as u64;
+    } else {
+        out = right.clone();
+        for t in &left.seen {
+            out.seen.insert(*t);
+        }
+        out.k = out.seen.len() as u64;
+    }
+    out.commitment = acc_commitment(&out);
+    Ok(out)
+}
+
 /// Pair-id for fold lottery binding.
 pub fn pair_id(left: &ClusterAcc, right: &ClusterAcc) -> [u8; 32] {
     let mut a = left.commitment;
@@ -600,6 +654,119 @@ mod tests {
         assert_eq!(ab.seen, ba.seen);
         for i in 0..c.len() {
             assert!((ab.sum_m[i].to_f64() - ba.sum_m[i].to_f64()).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn fold_acc_overlap_doubles_the_mean_a_monoid_law_violation() {
+        // Documents the existing gap in `fold_acc`: folding an accumulator
+        // with itself should be a no-op under a real monoid (it counts the
+        // same (id, n) pairs), but `sum_m` is re-summed unconditionally on
+        // overlap, so the mean silently doubles.
+        let c = contribs();
+        let cluster = h(0xC1);
+        let beacon = h(0xBE);
+        let tickets = grind_settlement(
+            &base(),
+            &c,
+            &Context::none(),
+            &FocusingParams::default(),
+            &beacon,
+            &cluster,
+            &h(0x91),
+            0,
+            16,
+            3,
+            easy_target(),
+        );
+        let acc = self_fold(c.len(), &tickets);
+        let folded_with_self = fold_acc(&acc, &acc);
+        assert_eq!(folded_with_self.k, acc.k, "k is unaffected by the bug");
+        for i in 0..c.len() {
+            let doubled = acc.sum_m[i] + acc.sum_m[i];
+            assert!(
+                (folded_with_self.sum_m[i].to_f64() - doubled.to_f64()).abs() < 1e-9,
+                "fold_acc(x, x) should reproduce the doubling bug this test documents"
+            );
+        }
+    }
+
+    #[test]
+    fn fold_acc_checked_rejects_overlap_instead_of_doubling() {
+        let c = contribs();
+        let cluster = h(0xC1);
+        let beacon = h(0xBE);
+        let tickets = grind_settlement(
+            &base(),
+            &c,
+            &Context::none(),
+            &FocusingParams::default(),
+            &beacon,
+            &cluster,
+            &h(0x91),
+            0,
+            16,
+            3,
+            easy_target(),
+        );
+        let acc = self_fold(c.len(), &tickets);
+        assert_eq!(
+            fold_acc_checked(&acc, &acc).unwrap_err(),
+            FoldOverlap::NonDisjoint(acc.seen.len())
+        );
+
+        // A partial overlap (one shared ticket) is rejected too.
+        let (first, rest) = tickets.split_first().unwrap();
+        let left = self_fold(c.len(), std::slice::from_ref(first));
+        let right = self_fold(c.len(), tickets.as_slice());
+        assert_eq!(
+            fold_acc_checked(&left, &right).unwrap_err(),
+            FoldOverlap::NonDisjoint(1)
+        );
+        let _ = rest;
+    }
+
+    #[test]
+    fn fold_acc_checked_matches_fold_acc_when_disjoint() {
+        let c = contribs();
+        let cluster = h(0xC1);
+        let beacon = h(0xBE);
+        let a_tickets = grind_settlement(
+            &base(),
+            &c,
+            &Context::none(),
+            &FocusingParams::default(),
+            &beacon,
+            &cluster,
+            &h(0xA),
+            0,
+            8,
+            2,
+            easy_target(),
+        );
+        let b_tickets = grind_settlement(
+            &base(),
+            &c,
+            &Context::none(),
+            &FocusingParams::default(),
+            &beacon,
+            &cluster,
+            &h(0xB),
+            100,
+            8,
+            2,
+            easy_target(),
+        );
+        let a = self_fold(c.len(), &a_tickets);
+        let b = self_fold(c.len(), &b_tickets);
+        let via_unchecked = fold_acc(&a, &b);
+        let via_checked = fold_acc_checked(&a, &b).expect("disjoint accumulators fold cleanly");
+        assert_eq!(via_unchecked.k, via_checked.k);
+        assert_eq!(via_unchecked.seen, via_checked.seen);
+        for i in 0..c.len() {
+            assert!(
+                (via_unchecked.sum_m[i].to_f64() - via_checked.sum_m[i].to_f64()).abs() < 1e-9
+            );
         }
     }
 
