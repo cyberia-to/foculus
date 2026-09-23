@@ -74,6 +74,7 @@ nothing by itself. remains, in order:
 1. specify the zero-knowledge statement `replay_marginals` would need to
    check without material disclosure (public inputs: `base`, `contribs`,
    `beacon`, `nonce`, `commitment`; private witness: the marginal vector).
+   done: `specs/p3-marginal-statement.md`.
 2. land private execution in zheng (already tracked, not P3-specific).
 3. replace `replay_marginals`'s exact-match check with proof verification;
    `SettlementTicket.marginals` stops being a field anyone but the
