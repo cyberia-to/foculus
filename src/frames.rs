@@ -171,13 +171,20 @@ fn serialize_signal(s: &Signal) -> Vec<u8> {
 
 /// Inverse of [`serialize_signal`]. A little bounded cursor over the payload;
 /// any short read (truncated frame) yields `None` rather than panicking.
+///
+/// Every collection count read off the wire goes through [`take_count`]
+/// first, same technique as this crate's other wire-count fixes (rows 103,
+/// 109, 129): a count is only accepted if the buffer has enough remaining
+/// bytes to actually hold that many entries, so a crafted or truncated frame
+/// can no longer drive an oversized `Vec::with_capacity` or an unbounded
+/// decode loop — it fails at the count, not partway through the entries.
 fn deserialize_signal(buf: &[u8]) -> Option<Signal> {
     let mut p = 0usize;
     let neuron = take32(buf, &mut p)?;
     let step = take_u64(buf, &mut p)?;
     let prev = take32(buf, &mut p)?;
     let height = take_u64(buf, &mut p)?;
-    let count = take_u32(buf, &mut p)? as usize;
+    let count = take_count(buf, &mut p, 145)?; // neuron+from+to+token(32×4) + amount(8) + valence(1) + height(8)
     let mut links = Vec::with_capacity(count);
     for _ in 0..count {
         links.push(CyberlinkRecord {
@@ -192,7 +199,7 @@ fn deserialize_signal(buf: &[u8]) -> Option<Signal> {
     }
     let mut box_moves = Vec::new();
     if p < buf.len() {
-        let count = take_u32(buf, &mut p)? as usize;
+        let count = take_count(buf, &mut p, 33)?; // nullifier(32) + flag(1), commitment's 40 bytes are additional
         for _ in 0..count {
             let nullifier = take32(buf, &mut p)?;
             let flag = take_u8(buf, &mut p)?;
@@ -209,7 +216,7 @@ fn deserialize_signal(buf: &[u8]) -> Option<Signal> {
     }
     let mut delta_pi = Vec::new();
     if p < buf.len() {
-        let count = take_u32(buf, &mut p)? as usize;
+        let count = take_count(buf, &mut p, 40)?; // to(32) + amount(8)
         for _ in 0..count {
             let to = take32(buf, &mut p)?;
             let amount = take_u64(buf, &mut p)?;
@@ -251,6 +258,20 @@ fn take_u8(buf: &[u8], p: &mut usize) -> Option<u8> {
     let b = *buf.get(*p)?;
     *p += 1;
     Some(b)
+}
+
+/// Read a wire-supplied collection count, rejecting it outright rather than
+/// letting the caller preallocate or loop on an attacker-chosen `u32`: the
+/// remaining buffer must actually be able to hold that many `min_bytes`-sized
+/// entries. `min_bytes` is each entry's minimum encoded size (for a variant
+/// with an optional trailing part, the size of its shortest form), so this
+/// never rejects a count a well-formed buffer could still satisfy.
+fn take_count(buf: &[u8], p: &mut usize, min_bytes: usize) -> Option<usize> {
+    let count = take_u32(buf, p)? as usize;
+    if count > buf.len().saturating_sub(*p) / min_bytes {
+        return None;
+    }
+    Some(count)
 }
 
 fn serialize_intent(i: &IntentRecord) -> Vec<u8> {
@@ -370,6 +391,73 @@ mod tests {
         let payload = serialize_intent(&i);
         // 32 + 8 + 32 + 64 = 136
         assert_eq!(payload.len(), 136);
+    }
+
+    // ── take_count: direct coverage of the two-part guard ──────────────────
+
+    #[test]
+    fn take_count_accepts_count_the_remaining_bytes_can_hold() {
+        let mut buf = vec![0u8; 4 + 145];
+        buf[0..4].copy_from_slice(&1u32.to_le_bytes());
+        let mut p = 0usize;
+        assert_eq!(take_count(&buf, &mut p, 145), Some(1));
+        assert_eq!(p, 4);
+    }
+
+    #[test]
+    fn take_count_rejects_when_remaining_bytes_cannot_hold_declared_entries() {
+        let buf = 5u32.to_le_bytes(); // claims 5 entries, 0 bytes follow
+        let mut p = 0usize;
+        assert_eq!(take_count(&buf, &mut p, 145), None);
+    }
+
+    #[test]
+    fn take_count_rejects_huge_count_on_a_short_buffer() {
+        let buf = u32::MAX.to_le_bytes();
+        let mut p = 0usize;
+        // u32::MAX / 145 would previously reach Vec::with_capacity directly;
+        // here it must fail at the count, before any allocation.
+        assert_eq!(take_count(&buf, &mut p, 145), None);
+    }
+
+    // ── deserialize_signal: the crafted-frame regressions row 103 flagged ──
+    // (an unbounded count let a crafted or truncated frame drive an
+    // arbitrarily large Vec::with_capacity and an unbounded decode loop;
+    // these confirm every collection count is now rejected at the count.)
+
+    fn header_bytes() -> Vec<u8> {
+        vec![0u8; 32 + 8 + 32 + 8] // neuron, step, prev, height
+    }
+
+    #[test]
+    fn decode_rejects_huge_link_count_on_a_short_buffer() {
+        let mut buf = header_bytes();
+        buf.extend_from_slice(&u32::MAX.to_le_bytes());
+        assert!(deserialize_signal(&buf).is_none());
+    }
+
+    #[test]
+    fn decode_rejects_link_count_when_buffer_too_short_for_declared_entries() {
+        let mut buf = header_bytes();
+        buf.extend_from_slice(&1u32.to_le_bytes()); // claims one link, none follow
+        assert!(deserialize_signal(&buf).is_none());
+    }
+
+    #[test]
+    fn decode_rejects_huge_box_move_count_on_a_short_buffer() {
+        let mut buf = header_bytes();
+        buf.extend_from_slice(&0u32.to_le_bytes()); // zero links
+        buf.extend_from_slice(&u32::MAX.to_le_bytes());
+        assert!(deserialize_signal(&buf).is_none());
+    }
+
+    #[test]
+    fn decode_rejects_huge_delta_pi_count_on_a_short_buffer() {
+        let mut buf = header_bytes();
+        buf.extend_from_slice(&0u32.to_le_bytes()); // zero links
+        buf.extend_from_slice(&0u32.to_le_bytes()); // zero box_moves
+        buf.extend_from_slice(&u32::MAX.to_le_bytes());
+        assert!(deserialize_signal(&buf).is_none());
     }
 }
 
