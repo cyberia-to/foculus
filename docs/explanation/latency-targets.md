@@ -57,12 +57,14 @@ normative join steps (structural-sync):
 ```
 1. obtain checkpoint = (BBG_root, folding_acc, height)   ~232–240 B
 2. final_proof = decide(folding_acc)                    zheng decider
-3. verify(final_proof, BBG_root)                        ~10–50 μs
+3. verify(final_proof, BBG_root)                        ~9–19 ms measured
 4. open namespaces of interest                          Lens ~200 B each
 5. maintain: fold each new block; refresh openings
 ```
 
 without fold, a thin client only has social checkpoints. **with fold in scope, tip trust is math.** that is the difference the scope buys.
+
+the ~9–19 ms figure is `TicketProver::seal` (SuperSpartan `decide`) plus `verify_fold_seal` on real settlement tickets, flat across ticket count from n=1 to n=512 (`audit/ticket-proof-cost.md`) — the earlier ~10–50 μs line assumed a succinct pairing-check verify; zheng's decider has no pairing, so its cost is dominated by Poseidon2 hashing and Brakedown-style query openings instead.
 
 ---
 
@@ -200,7 +202,7 @@ epoch length is a latency UX knob, not a security parameter once $k_{\min}$ and 
 | stage | target | notes |
 |---|---|---|
 | download checkpoint + acc | ~200–few KB | from any peer; untrusted until decide |
-| `decide(folding_acc)` verify | ~10–50 μs class | proves history to that height |
+| `decide(folding_acc)` verify | ~9–19 ms measured, flat in ticket count | proves history to that height |
 | open my namespaces | O(owned) + ~200 B / open | balances, notes, pending outs |
 | steady-state per tip | O(1) fold (~30 field ops class) + header | no re-decide from genesis |
 | re-join after long offline | one decide on latest acc | same as first join |
