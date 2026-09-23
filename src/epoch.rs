@@ -18,6 +18,7 @@ use tru::{impulse, Context, FocusingParams, Link};
 use crate::beacon::{
     self, claims_root, open_beacon, verify_beacon, BeaconArtifact, GENESIS_PREV, TEST_OUTER_T,
 };
+use crate::cluster::{partition_into_clusters, Adjacency};
 use crate::rewards::{
     allocate_budget_pub, contributions_with_rho, receipt_hash_pub, RewardClaim, RewardError,
     SettleReceipt, TicketPolicy,
@@ -76,6 +77,23 @@ impl EpochRunner {
 
     pub fn claims(&self) -> &[RewardClaim] {
         &self.claims
+    }
+
+    /// The canonical partition of the epoch's claims into clusters
+    /// ([[reward specification]] §7, `cluster::partition_into_clusters`):
+    /// connected components of overlapping ε-supports over `adjacency`, at
+    /// the given radius. Available in any phase once claims exist — freezing
+    /// only fixes `claims_root`, it does not fix the partition.
+    ///
+    /// `settle`/`settle_with_peers` do not dispatch per cluster yet: every
+    /// claim in the epoch still settles through one shared
+    /// `grind_settlement` call, so this partition is not yet load-bearing on
+    /// the settlement path. It makes the canonical grouping computable and
+    /// testable at the runner level; splitting `settle_with_peers` to run
+    /// once per cluster (each with its own ticket batch and fold tree) is
+    /// the next slice.
+    pub fn clusters(&self, adjacency: &Adjacency, radius: usize) -> Vec<Vec<usize>> {
+        partition_into_clusters(&self.claims, adjacency, radius)
     }
 
     /// Propose window: add a claim. Fails after freeze.
@@ -401,5 +419,41 @@ mod tests {
             runner.propose(claim_from_links(h(2), h(11), vec![], 1)),
             Err(EpochError::WrongPhase)
         );
+    }
+
+    #[test]
+    fn frozen_claims_partition_into_their_real_clusters() {
+        // Two claims on disjoint parts of the link graph: today's settle
+        // still treats them as one implicit group, but the canonical
+        // partition already sees two independent clusters.
+        let mut runner = EpochRunner::genesis(1);
+        runner
+            .propose(claim_from_links(h(0xA1), h(10), vec![Link::stake(h(1), h(2), 100)], 1))
+            .unwrap();
+        runner
+            .propose(claim_from_links(h(0xB2), h(11), vec![Link::stake(h(3), h(4), 100)], 1))
+            .unwrap();
+        runner.freeze().unwrap();
+
+        let adjacency = crate::cluster::Adjacency::new();
+        let clusters = runner.clusters(&adjacency, 0);
+        assert_eq!(clusters, vec![vec![0], vec![1]]);
+    }
+
+    #[test]
+    fn frozen_claims_with_overlapping_supports_merge() {
+        let mut runner = EpochRunner::genesis(1);
+        runner
+            .propose(claim_from_links(h(0xA1), h(10), vec![Link::stake(h(1), h(2), 100)], 1))
+            .unwrap();
+        runner
+            .propose(claim_from_links(h(0xB2), h(11), vec![Link::stake(h(3), h(4), 100)], 1))
+            .unwrap();
+        runner.freeze().unwrap();
+
+        let mut adjacency = crate::cluster::Adjacency::new();
+        adjacency.insert(h(2), vec![h(3)]);
+        let clusters = runner.clusters(&adjacency, 1);
+        assert_eq!(clusters, vec![vec![0, 1]]);
     }
 }
