@@ -161,8 +161,11 @@ pub fn verify_epoch_cert(
             if contribs.is_empty() {
                 return false;
             }
-            // Spot-check: directed total on receipt should match impulse of all claim links
-            // (allow floating noise via recompute)
+            // Spot-check: directed total on receipt must match the impulse of
+            // all claim links, recomputed from the public base + claims. Fx is
+            // deterministic fixed-point (arithmetic.md): an honest receipt's
+            // directed_total is bit-identical to this recompute, so any
+            // mismatch — inflated or deflated — is rejected outright.
             let all: Vec<Link> = inp.claims.iter().flat_map(|c| c.links.clone()).collect();
             let directed = tru::impulse(
                 inp.base,
@@ -172,12 +175,8 @@ pub fn verify_epoch_cert(
                 inp.params.epsilon,
             )
             .directed;
-            // Field equality on raw when same params
             if directed.raw().as_u64() != rec.directed_total.raw().as_u64() {
-                // allow small divergence only if both positive or both zero
-                if directed.to_f64() > 0.0 && rec.directed_total.to_f64() <= 0.0 {
-                    return false;
-                }
+                return false;
             }
             let _ = contribs;
         }
@@ -308,6 +307,71 @@ mod tests {
         };
         assert!(verify_epoch_cert(&cert, Some(&inputs)));
         assert!(verify_epoch_cert(&cert, None));
+    }
+
+    #[test]
+    fn inflated_directed_total_is_rejected() {
+        // directed_total is not bound into receipt_hash or cert_hash (both
+        // cover only epoch/beacon/shares and receipt_hash respectively), so
+        // the settle-inputs spot-check is the only thing standing between a
+        // forged directed_total and a verifying certificate.
+        let mut runner = EpochRunner::genesis(1);
+        runner.budget = 500;
+        runner.outer_t = TEST_OUTER_T;
+        runner
+            .propose(claim_from_links(
+                h(0xA1),
+                h(10),
+                vec![Link::stake(h(2), h(1), 8000)],
+                1,
+            ))
+            .unwrap();
+        let cr = runner.freeze().unwrap();
+        runner.open_quiet_beacon().unwrap();
+        let base = vec![
+            Link::stake(h(1), h(2), 100),
+            Link::stake(h(2), h(3), 100),
+            Link::stake(h(3), h(1), 100),
+        ];
+        let policy = TicketPolicy {
+            want: 2,
+            max_attempts: 32,
+            miner: h(10),
+            settle_target: easy_target(),
+            ..TicketPolicy::default()
+        };
+        let mut rec = runner
+            .settle(
+                &base,
+                &Context::none(),
+                &FocusingParams::default(),
+                &policy,
+            )
+            .unwrap()
+            .clone();
+        // Inflate the claimed directed total; receipt_hash/cert_hash still bind.
+        rec.directed_total = rec.directed_total + tru::Fx::ONE;
+        let tip = Tip::from_local(&Checkpoint {
+            root: h(0xB1),
+            acc: None,
+            height: 3,
+        });
+        let art = runner.beacon.clone().unwrap();
+        let cert = issue_epoch_cert(1, &tip, art, cr, Some(rec), None, None);
+        assert!(
+            verify_beacon(&cert.beacon),
+            "sanity: beacon still verifies"
+        );
+        let inputs = SettleVerifyInputs {
+            base: &base,
+            claims: runner.claims(),
+            ctx: &Context::none(),
+            params: &FocusingParams::default(),
+        };
+        assert!(
+            !verify_epoch_cert(&cert, Some(&inputs)),
+            "a directed_total inflated past the recomputed impulse must fail verification"
+        );
     }
 
     #[test]
