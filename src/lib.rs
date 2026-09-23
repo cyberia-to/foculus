@@ -33,6 +33,7 @@ pub mod erasure;
 pub mod nmt;
 #[cfg(feature = "net")]
 pub mod node;
+pub mod placement;
 pub mod store;
 pub mod vdisk;
 
