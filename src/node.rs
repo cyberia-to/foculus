@@ -22,6 +22,7 @@ use tokio::sync::RwLock;
 
 use crate::das;
 use crate::erasure;
+use crate::node_util::format_bytes;
 use crate::store::{self, FileEntry, GSet};
 
 /// Wire protocol message types.
@@ -560,13 +561,7 @@ impl SyncNode {
     /// Compute deterministic (k, n) from the number of alive peers.
     /// All nodes using the same algorithm + same device set = same result.
     pub fn compute_params(alive_devices: usize, redundancy_f: usize) -> (usize, usize) {
-        if alive_devices < 2 {
-            return (1, 1);
-        }
-        let n = alive_devices.min(8).next_power_of_two();
-        let f = redundancy_f.min(n - 1);
-        let k = n - f;
-        (k, n)
+        crate::node_util::compute_params(alive_devices, redundancy_f)
     }
 
     pub async fn status(&self) -> (usize, usize, usize, usize) {
@@ -716,15 +711,6 @@ fn save_peers(state: &SharedState) -> Result<()> {
         serde_json::to_string_pretty(&state.peer_capacities)?,
     )?;
     Ok(())
-}
-
-fn format_bytes(bytes: u64) -> String {
-    if bytes == 0 { return "unlimited".to_string(); }
-    const GB: u64 = 1_000_000_000;
-    const MB: u64 = 1_000_000;
-    if bytes >= GB { format!("{:.1} GB", bytes as f64 / GB as f64) }
-    else if bytes >= MB { format!("{:.1} MB", bytes as f64 / MB as f64) }
-    else { format!("{} B", bytes) }
 }
 
 // ── Server: handle incoming connections ──
