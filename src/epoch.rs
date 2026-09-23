@@ -202,6 +202,12 @@ impl EpochRunner {
         if !verify_fold_seal(&fold_seal) {
             return Err(EpochError::Proof(ProofError::VerifyFailed));
         }
+        if !root.meets_precision(policy.precision_epsilon, policy.precision_delta) {
+            return Err(EpochError::InsufficientPrecision {
+                k: root.k,
+                k_min: ClusterAcc::k_min(policy.precision_epsilon, policy.precision_delta),
+            });
+        }
         let neurons: Vec<[u8; 32]> = contribs.iter().map(|c| c.neuron).collect();
         let raw_shares = root.mean_shares(&neurons);
         let shares = allocate_budget_pub(&raw_shares, self.budget, directed_total)
@@ -292,6 +298,10 @@ pub enum EpochError {
     NoTickets,
     Proof(ProofError),
     Reward(RewardError),
+    /// Root accumulator's sample count k is below the Hoeffding minimum for
+    /// the policy's (precision_epsilon, precision_delta): the MC estimate is
+    /// not yet trustworthy enough to mint against.
+    InsufficientPrecision { k: u64, k_min: u64 },
 }
 
 #[cfg(test)]
@@ -355,6 +365,44 @@ mod tests {
         assert!(rec.ticket_seal.is_some());
         assert!(rec.fold_seal.is_some());
         assert!(rec.beacon_artifact.is_some());
+    }
+
+    #[test]
+    fn tight_precision_gate_rejects_undersampled_root() {
+        let mut runner = EpochRunner::genesis(1);
+        runner.budget = 500;
+        runner.outer_t = TEST_OUTER_T;
+        runner
+            .propose(claim_from_links(
+                h(0xA1),
+                h(10),
+                vec![Link::stake(h(2), h(1), 8000)],
+                1,
+            ))
+            .unwrap();
+        runner.freeze().unwrap();
+        runner.open_quiet_beacon().unwrap();
+
+        // want=4 grinds only a handful of winning tickets — nowhere near the
+        // k_min ≈ 265 that (ε=0.1, δ=0.01) demands.
+        let policy = TicketPolicy {
+            want: 4,
+            max_attempts: 64,
+            miner: h(10),
+            precision_epsilon: 0.1,
+            precision_delta: 0.01,
+            ..TicketPolicy::default()
+        };
+        let err = runner
+            .settle(&base(), &Context::none(), &FocusingParams::default(), &policy)
+            .unwrap_err();
+        match err {
+            EpochError::InsufficientPrecision { k, k_min } => {
+                assert!(k < k_min);
+                assert!(k_min > 100 && k_min < 400);
+            }
+            other => panic!("expected InsufficientPrecision, got {other:?}"),
+        }
     }
 
     #[test]

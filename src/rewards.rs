@@ -83,6 +83,10 @@ pub enum RewardError {
     BudgetZero,
     /// Ticket grind produced no winning samples.
     NoTickets,
+    /// Root accumulator's sample count k is below the Hoeffding minimum for
+    /// (precision_epsilon, precision_delta): the MC estimate is not yet
+    /// trustworthy enough to mint against.
+    InsufficientPrecision { k: u64, k_min: u64 },
 }
 
 /// How many settlement tickets / grind budget for [`settle_epoch_tickets`].
@@ -99,6 +103,12 @@ pub struct TicketPolicy {
     pub fold_target: u64,
     /// Local miner id (usually the settler neuron).
     pub miner: [u8; 32],
+    /// Hoeffding ε for the decide gate: [`ClusterAcc::meets_precision`] must
+    /// hold on the root accumulator before a receipt mints. Default 1.0
+    /// (k_min = 1) reproduces the old ungated behavior.
+    pub precision_epsilon: f64,
+    /// Hoeffding δ for the decide gate; see `precision_epsilon`.
+    pub precision_delta: f64,
 }
 
 impl Default for TicketPolicy {
@@ -110,6 +120,8 @@ impl Default for TicketPolicy {
             settle_target: easy_target(),
             fold_target: easy_target(),
             miner: [0u8; 32],
+            precision_epsilon: 1.0,
+            precision_delta: 1.0,
         }
     }
 }
@@ -356,6 +368,12 @@ pub fn settle_with_peer_accs(
     };
     if root.k == 0 {
         return Err(RewardError::NoTickets);
+    }
+    if !root.meets_precision(policy.precision_epsilon, policy.precision_delta) {
+        return Err(RewardError::InsufficientPrecision {
+            k: root.k,
+            k_min: ClusterAcc::k_min(policy.precision_epsilon, policy.precision_delta),
+        });
     }
     let neurons: Vec<[u8; 32]> = contribs.iter().map(|c| c.neuron).collect();
     let raw_shares = root.mean_shares(&neurons);
@@ -665,5 +683,44 @@ mod tests {
         .unwrap();
         assert!(verify_receipt(&rec));
         assert_eq!(share_of(&rec, &h(10)), 1000);
+    }
+
+    #[test]
+    fn tight_precision_gate_rejects_undersampled_root() {
+        let params = FocusingParams::default();
+        let claim = claim_from_links(
+            h(0xA1),
+            h(10),
+            vec![Link::stake(h(2), h(1), 8000)],
+            1,
+        );
+        // want=4 grinds only a handful of winning tickets — nowhere near the
+        // k_min ≈ 265 that (ε=0.1, δ=0.01) demands.
+        let policy = TicketPolicy {
+            want: 4,
+            max_attempts: 64,
+            miner: h(10),
+            precision_epsilon: 0.1,
+            precision_delta: 0.01,
+            ..TicketPolicy::default()
+        };
+        let err = settle_epoch_tickets(
+            1,
+            &GENESIS_PREV,
+            &base(),
+            &[claim],
+            &Context::none(),
+            &params,
+            1000,
+            &policy,
+        )
+        .unwrap_err();
+        match err {
+            RewardError::InsufficientPrecision { k, k_min } => {
+                assert!(k < k_min);
+                assert!(k_min > 100 && k_min < 400);
+            }
+            other => panic!("expected InsufficientPrecision, got {other:?}"),
+        }
     }
 }
