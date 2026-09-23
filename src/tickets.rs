@@ -101,17 +101,21 @@ impl ClusterAcc {
     }
 
     /// Hoeffding-style minimum sample count for (ε, δ).
-    /// `k_min = ceil(ln(2/δ) / (2 ε²))`.
-    pub fn k_min(epsilon: f64, delta: f64) -> u64 {
-        if epsilon <= 0.0 || delta <= 0.0 || delta >= 1.0 {
+    /// `k_min = ceil(ln(2/δ) / (2 ε²))`, computed in [`Fx`] per
+    /// arithmetic.md: no float on the settle-mint path.
+    pub fn k_min(epsilon: Fx, delta: Fx) -> u64 {
+        if epsilon <= Fx::ZERO || delta <= Fx::ZERO || delta >= Fx::ONE {
             return 1;
         }
-        let num = (2.0 / delta).ln();
-        let den = 2.0 * epsilon * epsilon;
-        (num / den).ceil().max(1.0) as u64
+        let num = Fx::from_int(2).div(delta).ln();
+        let den = Fx::from_int(2) * epsilon * epsilon;
+        let ratio = num.div(den);
+        let floor = ratio.floor_to_i64();
+        let ceil = if ratio == Fx::from_int(floor) { floor } else { floor + 1 };
+        ceil.max(1) as u64
     }
 
-    pub fn meets_precision(&self, epsilon: f64, delta: f64) -> bool {
+    pub fn meets_precision(&self, epsilon: Fx, delta: Fx) -> bool {
         self.k >= Self::k_min(epsilon, delta)
     }
 }
@@ -638,7 +642,29 @@ mod tests {
     #[test]
     fn k_min_hoeffding() {
         // ε=0.1, δ=0.01 → ln(200)/(2*0.01) ≈ 5.3/0.02 ≈ 265
-        let k = ClusterAcc::k_min(0.1, 0.01);
+        let epsilon = Fx::from_ratio(1, 10);
+        let delta = Fx::from_ratio(1, 100);
+        let k = ClusterAcc::k_min(epsilon, delta);
         assert!(k > 100 && k < 400);
+    }
+
+    #[test]
+    fn k_min_degenerate_inputs_return_one() {
+        let ok = Fx::from_ratio(1, 10);
+        assert_eq!(ClusterAcc::k_min(Fx::ZERO, ok), 1);
+        assert_eq!(ClusterAcc::k_min(ok, Fx::ZERO), 1);
+        assert_eq!(ClusterAcc::k_min(ok, Fx::ONE), 1);
+    }
+
+    #[test]
+    fn meets_precision_tracks_k_min() {
+        let epsilon = Fx::from_ratio(1, 10);
+        let delta = Fx::from_ratio(1, 100);
+        let k_min = ClusterAcc::k_min(epsilon, delta);
+        let mut acc = ClusterAcc::empty(1);
+        acc.k = k_min - 1;
+        assert!(!acc.meets_precision(epsilon, delta));
+        acc.k = k_min;
+        assert!(acc.meets_precision(epsilon, delta));
     }
 }
