@@ -469,18 +469,14 @@ pub fn mint_receipt_to_ledger(
     )
 }
 
-/// Nonnegative weight for proportional split. Any strictly positive Fx maps
-/// to at least 1 so tiny Shapley shares still receive budget mass.
+/// Nonnegative weight for proportional split, read straight off Fx's own
+/// fixed-point representation (never through `to_f64`, which is display-only
+/// and not a step any computation tru proves — arithmetic.md).
 fn fx_weight(x: Fx) -> u128 {
     if x <= Fx::ZERO {
         return 0;
     }
-    let f = x.to_f64();
-    if f <= 0.0 {
-        return 0;
-    }
-    let w = (f * 1_000_000_000_000.0) as u128;
-    w.max(1)
+    x.raw().as_u64() as u128
 }
 
 fn receipt_hash(epoch: u64, beacon: &[u8; 32], shares: &[SettledShare]) -> [u8; 32] {
@@ -620,6 +616,32 @@ mod tests {
         let shares = allocate_budget(&raw, 100, Fx::ONE).unwrap();
         assert_eq!(shares[0].amount, 100);
         assert_eq!(shares[1].amount, 0);
+    }
+
+    #[test]
+    fn fx_weight_matches_raw_scaled_integer() {
+        // fx_weight must read Fx's own scaled representation directly, never
+        // round-trip through to_f64 (arithmetic.md: never a step tru proves).
+        assert_eq!(fx_weight(Fx::ZERO), 0);
+        assert_eq!(fx_weight(Fx::ONE), 1u128 << 32);
+        let third = Fx::from_ratio(1, 3);
+        assert_eq!(fx_weight(third), third.raw().as_u64() as u128);
+    }
+
+    #[test]
+    fn allocate_budget_splits_by_raw_fixed_point_weight() {
+        // 1/3 and 2/3 in fixed point: the split must follow Fx's own raw
+        // scaled integers exactly, deterministically, with no float rounding
+        // drift from the old to_f64()*1e12 conversion.
+        let a = Fx::from_ratio(1, 3);
+        let b = Fx::from_ratio(2, 3);
+        let raw = vec![(h(1), a), (h(2), b)];
+        let shares = allocate_budget(&raw, 300, a + b).unwrap();
+        assert_eq!(shares[0].amount + shares[1].amount, 300, "conservation");
+        let (wa, wb) = (fx_weight(a), fx_weight(b));
+        let expected_a = ((wa * 300) / (wa + wb)) as u64;
+        assert_eq!(shares[0].amount, expected_a);
+        assert_eq!(shares[1].amount, 300 - expected_a);
     }
 
     #[test]
