@@ -23,7 +23,7 @@
 //! them and route to chain/erasure as appropriate.
 
 use bbg::IntentRecord;
-use tape::{Chunk, ReadResult, Reader, sigil};
+use tade::{Chunk, ReadResult, Reader, sigil};
 
 use crate::{CyberlinkRecord, SELF_NETWORK, Signal};
 
