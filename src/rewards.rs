@@ -281,6 +281,36 @@ pub fn settle_epoch_tickets(
     )
 }
 
+/// The settle_target this epoch's contributor count implies under property
+/// 4's cluster-size banding (`tickets::banded_target`), given `policy`'s
+/// unbanded target as the value a cluster of `base_n` contributors would use.
+pub fn banded_settle_target(policy: &TicketPolicy, claims: &[RewardClaim], base_n: usize) -> u64 {
+    let n_contrib = contributions_with_rho(claims).len();
+    crate::tickets::banded_target(policy.settle_target, n_contrib, base_n)
+}
+
+/// Like [`settle_epoch_tickets`], but bands `policy.settle_target` by this
+/// epoch's contributor count first (property 4, progress-freedom): a live
+/// epoch computes its own per-cluster target instead of the caller banding
+/// it by hand before constructing `policy`.
+pub fn settle_epoch_tickets_banded(
+    epoch: u64,
+    prev_beacon: &[u8; 32],
+    base: &[Link],
+    claims: &[RewardClaim],
+    ctx: &Context,
+    params: &FocusingParams,
+    budget: u64,
+    policy: &TicketPolicy,
+    base_n: usize,
+) -> Result<SettleReceipt, RewardError> {
+    let banded = TicketPolicy {
+        settle_target: banded_settle_target(policy, claims, base_n),
+        ..policy.clone()
+    };
+    settle_epoch_tickets(epoch, prev_beacon, base, claims, ctx, params, budget, &banded)
+}
+
 /// Like [`settle_epoch_tickets`] but merges additional miner self-accumulators
 /// (gossiped peer batches) into the fold tree.
 pub fn settle_with_peer_accs(
@@ -665,5 +695,74 @@ mod tests {
         .unwrap();
         assert!(verify_receipt(&rec));
         assert_eq!(share_of(&rec, &h(10)), 1000);
+    }
+
+    #[test]
+    fn banded_settle_target_scales_with_contributor_count() {
+        let policy = TicketPolicy {
+            settle_target: 1 << 40,
+            ..TicketPolicy::default()
+        };
+        let claims_of = |n: u8| -> Vec<RewardClaim> {
+            (0..n)
+                .map(|i| {
+                    claim_from_links(
+                        h(0x50 + i),
+                        h(0x70 + i),
+                        vec![Link::stake(h(2), h(1), 100 + i as u128)],
+                        1,
+                    )
+                })
+                .collect()
+        };
+        let small = claims_of(4);
+        let large = claims_of(32);
+
+        // n_contrib == base_n: banding is a no-op.
+        assert_eq!(banded_settle_target(&policy, &small, 4), policy.settle_target);
+
+        // n_contrib scales the target exactly as tickets::banded_target does.
+        let expect_large = crate::tickets::banded_target(policy.settle_target, 32, 4);
+        assert_eq!(banded_settle_target(&policy, &large, 4), expect_large);
+        assert!(
+            expect_large > policy.settle_target,
+            "a larger cluster should get an easier (larger) target"
+        );
+    }
+
+    #[test]
+    fn settle_epoch_tickets_banded_matches_plain_when_n_equals_base_n() {
+        let params = FocusingParams::default();
+        let claim = claim_from_links(h(0xA1), h(10), vec![Link::stake(h(2), h(1), 8000)], 1);
+        let policy = TicketPolicy {
+            want: 4,
+            max_attempts: 64,
+            miner: h(10),
+            ..TicketPolicy::default()
+        };
+        let plain = settle_epoch_tickets(
+            1,
+            &GENESIS_PREV,
+            &base(),
+            &[claim.clone()],
+            &Context::none(),
+            &params,
+            1000,
+            &policy,
+        )
+        .unwrap();
+        let banded = settle_epoch_tickets_banded(
+            1,
+            &GENESIS_PREV,
+            &base(),
+            &[claim],
+            &Context::none(),
+            &params,
+            1000,
+            &policy,
+            1,
+        )
+        .unwrap();
+        assert_eq!(plain.receipt_hash, banded.receipt_hash);
     }
 }
