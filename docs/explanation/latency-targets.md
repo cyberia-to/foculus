@@ -202,10 +202,18 @@ epoch length is a latency UX knob, not a security parameter once $k_{\min}$ and 
 | download checkpoint + acc | ~200–few KB | from any peer; untrusted until decide |
 | `decide(folding_acc)` verify | ~10–50 μs class | proves history to that height |
 | open my namespaces | O(owned) + ~200 B / open | balances, notes, pending outs |
-| steady-state per tip | O(1) fold (~30 field ops class) + header | no re-decide from genesis |
+| steady-state per tip | O(1) in k_min, ~0.66 ms measured | no re-decide from genesis |
 | re-join after long offline | one decide on latest acc | same as first join |
 
 join latency is dominated by **download + RTT**, not by verify. verify is effectively free compared to network. product scope: cold start on phone must complete fold verify before treating openings as money-grade.
+
+the ~0.66 ms figure is `absorb_ticket`/`fold_acc` (src/tickets.rs) measured
+at a k_min-sized accumulator (k≈265, 8 contributors, `tests/fold_step_cost.rs`,
+`audit/fold-step-cost.md`) — the earlier ~30 field ops class line priced
+only the algebraic sum, not the `BTreeSet` bookkeeping and whole-accumulator
+rehash the current implementation pays on every call. still two orders of
+magnitude below `decide`/`verify` (9–19 ms) and four below network stages,
+so the "effectively free compared to network" conclusion above is unchanged.
 
 ---
 
