@@ -145,6 +145,23 @@ pub fn settle_score(
     score_u64(&hash32(&buf))
 }
 
+/// Role separation (specs/rewards.md §7): a miner that is itself a contender
+/// in the cluster it would settle can bias the sample by withholding a
+/// nonce that lowers its own share, so the deterrent §7 names is that it
+/// does not settle a cluster it contends in.
+///
+/// Not yet wired into [`try_settlement_ticket`]: gating there unconditionally
+/// would starve settlement whenever the only miner available for a cluster
+/// is also its sole contender (the common case for a single-node network,
+/// today's every test in this crate and phase 1's early genesis nodes) — a
+/// liveness regression the spec's forfeit-pricing deterrent avoids by
+/// pricing the conflict instead of forbidding it outright. Wiring this in
+/// needs that liveness trade-off decided first: exempt the single-miner
+/// case, or accept unsettled clusters until a second miner appears.
+pub fn role_separation_holds(miner: &[u8; 32], contribs: &[Contribution]) -> bool {
+    !contribs.iter().any(|c| &c.neuron == miner)
+}
+
 /// Try one nonce: compute marginals, test win. Returns ticket if it wins.
 pub fn try_settlement_ticket(
     base: &[tru::Link],
@@ -532,6 +549,14 @@ mod tests {
         for t in &tickets {
             assert!(verify_settlement_ticket(t, &beacon, &cluster, easy_target()));
         }
+    }
+
+    #[test]
+    fn role_separation_rejects_a_contending_miner() {
+        let c = contribs();
+        assert!(!role_separation_holds(&h(10), &c)); // h(10) is contribs()[0].neuron
+        assert!(!role_separation_holds(&h(11), &c)); // contribs()[1].neuron
+        assert!(role_separation_holds(&h(0x91), &c)); // not a contender
     }
 
     #[test]
