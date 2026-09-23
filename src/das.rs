@@ -5,6 +5,7 @@
 
 use cyber_hemera::Hash;
 use cyber_hemera::tree;
+use tru::Fx;
 
 use crate::erasure::Shard;
 
@@ -94,10 +95,19 @@ pub fn verify_availability(
     (passed, samples.len())
 }
 
-/// Confidence level for k successful samples out of k attempts.
-/// 1 - (1/2)^k assuming adversary withholds >50%.
-pub fn confidence(successful_samples: usize) -> f64 {
-    1.0 - 0.5_f64.powi(successful_samples as i32)
+/// Confidence level for k successful samples out of k attempts, as a
+/// fixed-point fraction: 1 − 2⁻ᵏ, assuming an adversary withholds >50%.
+///
+/// f64 has no place on a path this crate's verifiers can end up computing
+/// over — different platforms round `0.5_f64.powi` differently at the ULP,
+/// and a threshold comparison that disagrees at the margin is a consensus
+/// split. `Fx` (arithmetic.md) has 32 fractional bits, so once `2⁻ᵏ` rounds
+/// to a value smaller than that resolution (around `k` in the high 30s),
+/// `confidence` saturates at exactly `Fx::ONE` rather than silently losing
+/// precision the caller cannot see.
+pub fn confidence(successful_samples: usize) -> Fx {
+    let k = successful_samples.min(62) as u32;
+    Fx::ONE - Fx::from_ratio(1, 1i64 << k)
 }
 
 /// Serialize a shard's field elements to bytes for hashing.
@@ -151,9 +161,27 @@ mod tests {
 
     #[test]
     fn confidence_calculation() {
-        assert!(confidence(20) > 0.999999);
-        assert!(confidence(30) > 0.999999999);
-        assert!((confidence(1) - 0.5).abs() < 1e-10);
+        assert!(confidence(20).to_f64() > 0.999999);
+        assert!(confidence(30).to_f64() > 0.999999999);
+        assert_eq!(confidence(1), Fx::from_ratio(1, 2));
+    }
+
+    #[test]
+    fn confidence_is_monotone_in_successful_samples() {
+        let mut prev = Fx::ZERO;
+        for k in 0..40 {
+            let c = confidence(k);
+            assert!(c.raw().as_u64() >= prev.raw().as_u64(), "confidence dipped at k={k}");
+            prev = c;
+        }
+    }
+
+    #[test]
+    fn confidence_saturates_at_the_fixed_point_resolution_floor() {
+        // Well past FRAC_BITS (32), 2⁻ᵏ rounds to zero, so confidence
+        // saturates at exactly Fx::ONE instead of silently losing precision.
+        assert_eq!(confidence(40), Fx::ONE);
+        assert_eq!(confidence(62), Fx::ONE);
     }
 
     #[test]
