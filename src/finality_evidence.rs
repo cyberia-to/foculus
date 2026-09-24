@@ -60,7 +60,17 @@ impl FinalityEvidence {
         }
     }
 
-    pub fn issue_certified(signal_id: Particle, tip: &Tip, nullifiers: &[Particle]) -> Self {
+    /// Crate-private: `Certified` evidence attests that `finalizes()` (protocol.md
+    /// step 6) held, and the only place that runs that check is
+    /// [`Self::issue_from_domain`]. `verify()` re-checks binding self-consistency,
+    /// never the certification gate itself — the tip and nullifiers it binds are
+    /// public knowledge, so an unrestricted `pub` constructor would let any party
+    /// manufacture evidence a light client accepts as "certified final" for a
+    /// signal that never actually cleared the gate (row 8, foculus/audit/
+    /// uncertified-mass-unwired.md). No caller in this repo used the public form
+    /// (confirmed empty by grep before restricting it), so this closes the gap
+    /// without moving anything.
+    pub(crate) fn issue_certified(signal_id: Particle, tip: &Tip, nullifiers: &[Particle]) -> Self {
         let nullifier_hash = nullifier_set_hash(nullifiers);
         let binding = bind(
             DOMAIN_CERT,
