@@ -253,6 +253,96 @@ mod tests {
     }
 
     #[test]
+    fn verify_certified_ticket_accepts_a_seal_bound_to_a_different_beacon_cluster() {
+        // certify_ticket folds `beacon || cluster || nonce || miner || commitment`
+        // into the seal and decides a statement over `hemera(beacon || cluster)`
+        // (ticket_proof::ticket_statement). verify_certified_ticket calls
+        // verify_fold_seal(&cert.seal) — which only checks the seal's own
+        // internal HyperNova consistency — and never recomputes that statement
+        // from its own `beacon`/`cluster` parameters to compare against
+        // `cert.seal.statement`. So a seal honestly proven for one ticket under
+        // one (beacon, cluster) still verifies when spliced onto a different,
+        // unrelated ticket's certification under a different (beacon, cluster).
+        let (base, contribs, beacon, cluster) = setup();
+        let tickets = grind_settlement(
+            &base,
+            &contribs,
+            &Context::none(),
+            &FocusingParams::default(),
+            &beacon,
+            &cluster,
+            &h(0x91),
+            0,
+            32,
+            1,
+            easy_target(),
+        );
+        assert!(!tickets.is_empty());
+        let genuine = certify_ticket(
+            &base,
+            &contribs,
+            &Context::none(),
+            &FocusingParams::default(),
+            &beacon,
+            &cluster,
+            &tickets[0],
+        )
+        .unwrap();
+
+        // An unrelated ticket, won under a different beacon and cluster, over
+        // the same public graph. Its seal is honestly generated and internally
+        // sound — just bound to a different context.
+        let other_beacon = h(0xDE);
+        let other_cluster = h(0xAD);
+        let other_tickets = grind_settlement(
+            &base,
+            &contribs,
+            &Context::none(),
+            &FocusingParams::default(),
+            &other_beacon,
+            &other_cluster,
+            &h(0x92),
+            0,
+            32,
+            1,
+            easy_target(),
+        );
+        assert!(!other_tickets.is_empty());
+        let other = certify_ticket(
+            &base,
+            &contribs,
+            &Context::none(),
+            &FocusingParams::default(),
+            &other_beacon,
+            &other_cluster,
+            &other_tickets[0],
+        )
+        .unwrap();
+
+        // Splice: the genuine ticket and order, but a seal proven for the
+        // unrelated ticket under a different beacon/cluster.
+        let mut spliced = genuine.clone();
+        spliced.seal = other.seal;
+
+        // The bug: this still verifies. A sound check must reject it, because
+        // the seal was never proven for this ticket, beacon or cluster.
+        assert!(
+            verify_certified_ticket(
+                &base,
+                &contribs,
+                &Context::none(),
+                &FocusingParams::default(),
+                &beacon,
+                &cluster,
+                easy_target(),
+                &spliced,
+            ),
+            "documents the gap: verify_certified_ticket does not bind the seal \
+             to its own beacon/cluster/ticket arguments"
+        );
+    }
+
+    #[test]
     fn tampered_marginal_fails_replay() {
         let (base, contribs, beacon, cluster) = setup();
         let mut tickets = grind_settlement(
