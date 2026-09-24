@@ -22,7 +22,7 @@ use cyber_hemera::hash as hemera_hash;
 use tru::Fx;
 
 use crate::rewards::RewardClaim;
-use crate::tickets::ClusterAcc;
+use crate::tickets::{seen_digest_from_set, ClusterAcc};
 
 /// Topic = claims_root / cluster id.
 pub type Topic = [u8; 32];
@@ -151,6 +151,7 @@ pub fn decode_self_acc(bytes: &[u8]) -> Option<(Topic, [u8; 32], ClusterAcc)> {
         seen.insert((mid, nonce));
     }
     let commitment: [u8; 32] = bytes[off..off + 32].try_into().ok()?;
+    let seen_digest = seen_digest_from_set(&seen);
     Some((
         topic,
         miner,
@@ -158,6 +159,7 @@ pub fn decode_self_acc(bytes: &[u8]) -> Option<(Topic, [u8; 32], ClusterAcc)> {
             sum_m,
             k,
             seen,
+            seen_digest,
             commitment,
         },
     ))
