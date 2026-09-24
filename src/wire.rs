@@ -17,7 +17,7 @@ use tru::{Fx, Link};
 
 use crate::gossip::{SettleMsg, Topic};
 use crate::rewards::RewardClaim;
-use crate::tickets::ClusterAcc;
+use crate::tickets::{seen_digest_from_set, ClusterAcc};
 
 const MAGIC: &[u8; 4] = b"FSET";
 const VERSION: u8 = 1;
@@ -225,10 +225,12 @@ fn decode_acc_body(bytes: &[u8], off: &mut usize) -> Option<ClusterAcc> {
         seen.insert((mid, nonce));
     }
     let commitment = read32(bytes, off)?;
+    let seen_digest = seen_digest_from_set(&seen);
     Some(ClusterAcc {
         sum_m,
         k,
         seen,
+        seen_digest,
         commitment,
     })
 }

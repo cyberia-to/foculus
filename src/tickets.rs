@@ -74,6 +74,9 @@ pub struct ClusterAcc {
     pub k: u64,
     /// Canonical (miner, nonce) pairs — duplicate tickets discarded.
     pub seen: BTreeSet<([u8; 32], u64)>,
+    /// Additive multiset digest of `seen`, maintained incrementally so
+    /// `acc_commitment` never rehashes the whole set — see `elem_digest`.
+    pub seen_digest: [u64; 4],
     pub commitment: [u8; 32],
 }
 
@@ -83,6 +86,7 @@ impl ClusterAcc {
             sum_m: vec![Fx::ZERO; n_contrib],
             k: 0,
             seen: BTreeSet::new(),
+            seen_digest: [0u64; 4],
             commitment: [0u8; 32],
         }
     }
@@ -238,6 +242,7 @@ pub fn absorb_ticket(acc: &mut ClusterAcc, ticket: &SettlementTicket) {
     if !acc.seen.insert((ticket.miner, ticket.nonce)) {
         return;
     }
+    acc.seen_digest = digest_add(acc.seen_digest, elem_digest(&ticket.miner, ticket.nonce));
     if acc.sum_m.len() != ticket.marginals.len() {
         if acc.k == 0 {
             acc.sum_m = vec![Fx::ZERO; ticket.marginals.len()];
@@ -279,7 +284,17 @@ pub fn fold_acc(left: &ClusterAcc, right: &ClusterAcc) -> ClusterAcc {
         // for honest non-overlapping self-folds, sum is fine. When overlap,
         // use left and only add right's exclusive mass by ratio — approximate
         // with: if no intersection, add; else keep left+right with k=|seen|.
-        let inter = left.seen.intersection(&right.seen).count() as u64;
+        // seen_digest follows the same set-union algebra: disjoint sides just
+        // add, an overlap is corrected by subtracting the intersection's
+        // digest once (inclusion-exclusion), so this stays O(|intersection|)
+        // instead of re-summing the whole union.
+        let mut inter_digest = [0u64; 4];
+        let mut inter = 0u64;
+        for t in left.seen.intersection(&right.seen) {
+            inter += 1;
+            inter_digest = digest_add(inter_digest, elem_digest(&t.0, t.1));
+        }
+        out.seen_digest = digest_sub(digest_add(left.seen_digest, right.seen_digest), inter_digest);
         if inter == 0 {
             out.k = left.k.saturating_add(right.k);
         } else {
@@ -296,13 +311,17 @@ pub fn fold_acc(left: &ClusterAcc, right: &ClusterAcc) -> ClusterAcc {
     } else if left.k >= right.k {
         out = left.clone();
         for t in &right.seen {
-            out.seen.insert(*t);
+            if out.seen.insert(*t) {
+                out.seen_digest = digest_add(out.seen_digest, elem_digest(&t.0, t.1));
+            }
         }
         out.k = out.seen.len() as u64;
     } else {
         out = right.clone();
         for t in &left.seen {
-            out.seen.insert(*t);
+            if out.seen.insert(*t) {
+                out.seen_digest = digest_add(out.seen_digest, elem_digest(&t.0, t.1));
+            }
         }
         out.k = out.seen.len() as u64;
     }
@@ -450,17 +469,61 @@ pub fn assemble_fold_tree(
     level.into_iter().next().unwrap_or_default()
 }
 
+/// Hash one `seen` element for the incremental multiset digest.
+fn elem_digest(miner: &[u8; 32], nonce: u64) -> [u64; 4] {
+    let mut buf = Vec::with_capacity(ACC_DOMAIN.len() + 4 + 32 + 8);
+    buf.extend_from_slice(ACC_DOMAIN);
+    buf.extend_from_slice(b"seen");
+    buf.extend_from_slice(miner);
+    buf.extend_from_slice(&nonce.to_le_bytes());
+    let h = hash32(&buf);
+    let mut limbs = [0u64; 4];
+    for (i, limb) in limbs.iter_mut().enumerate() {
+        *limb = u64::from_le_bytes(h[i * 8..i * 8 + 8].try_into().unwrap_or([0u8; 8]));
+    }
+    limbs
+}
+
+fn digest_add(a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
+    let mut out = [0u64; 4];
+    for i in 0..4 {
+        out[i] = a[i].wrapping_add(b[i]);
+    }
+    out
+}
+
+fn digest_sub(a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
+    let mut out = [0u64; 4];
+    for i in 0..4 {
+        out[i] = a[i].wrapping_sub(b[i]);
+    }
+    out
+}
+
+/// Recompute the incremental digest from a full `seen` set — used only when
+/// decoding a `ClusterAcc` off the wire, where the set is already being
+/// rebuilt from scratch element by element.
+pub(crate) fn seen_digest_from_set(seen: &BTreeSet<([u8; 32], u64)>) -> [u64; 4] {
+    let mut out = [0u64; 4];
+    for (miner, nonce) in seen {
+        out = digest_add(out, elem_digest(miner, *nonce));
+    }
+    out
+}
+
+/// Commit an accumulator. `seen_digest` folds in every `seen` element
+/// incrementally (see `absorb_ticket`, `fold_acc`), so this hashes a small
+/// fixed-size buffer regardless of `k` instead of rehashing all of `seen`.
 fn acc_commitment(acc: &ClusterAcc) -> [u8; 32] {
-    let mut buf = Vec::with_capacity(ACC_DOMAIN.len() + 16 + acc.sum_m.len() * 8 + acc.seen.len() * 40);
+    let mut buf = Vec::with_capacity(ACC_DOMAIN.len() + 16 + acc.sum_m.len() * 8 + 32);
     buf.extend_from_slice(ACC_DOMAIN);
     buf.extend_from_slice(&acc.k.to_le_bytes());
     buf.extend_from_slice(&(acc.sum_m.len() as u64).to_le_bytes());
     for m in &acc.sum_m {
         buf.extend_from_slice(&m.raw().as_u64().to_le_bytes());
     }
-    for (miner, nonce) in &acc.seen {
-        buf.extend_from_slice(miner);
-        buf.extend_from_slice(&nonce.to_le_bytes());
+    for limb in &acc.seen_digest {
+        buf.extend_from_slice(&limb.to_le_bytes());
     }
     hash32(&buf)
 }
