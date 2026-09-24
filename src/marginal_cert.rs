@@ -21,7 +21,8 @@ use tru::{Context, FocusingParams, Fx, Link};
 
 use crate::settlement::{self, Contribution};
 use crate::ticket_proof::{
-    prove_settlement_batch, verify_fold_seal, FoldSeal, ProofError, TicketProver,
+    prove_settlement_batch, ticket_statement, verify_fold_seal, FoldSeal, ProofError,
+    TicketProver,
 };
 use crate::tickets::{
     commit_marginals, settle_score, ClusterId, SettlementTicket,
@@ -123,8 +124,14 @@ pub fn verify_certified_ticket(
     if replay_marginals(base, contribs, ctx, params, beacon, &cert.ticket).is_none() {
         return false;
     }
-    // HyperNova seal
+    // HyperNova seal: internal self-consistency...
     if !verify_fold_seal(&cert.seal) {
+        return false;
+    }
+    // ...and binding to *this* verification's own (beacon, cluster) — a seal
+    // proven honestly for a different beacon/cluster pair is internally
+    // self-consistent too, so the seal alone never proves it.
+    if cert.seal.statement != ticket_statement(beacon, cluster, 1) {
         return false;
     }
     // Ordering consistency
@@ -250,6 +257,84 @@ mod tests {
         // Marginal sum is directed coalition value along that order (non-negative total)
         let sum: f64 = cert.ticket.marginals.iter().map(|m| m.to_f64()).sum();
         assert!(sum >= 0.0);
+    }
+
+    #[test]
+    fn verify_certified_ticket_rejects_a_seal_bound_to_a_different_beacon_cluster() {
+        let (base, contribs, beacon_a, cluster_a) = setup();
+        let beacon_b = h(0xDE);
+        let cluster_b = h(0xD1);
+
+        let tickets_a = grind_settlement(
+            &base,
+            &contribs,
+            &Context::none(),
+            &FocusingParams::default(),
+            &beacon_a,
+            &cluster_a,
+            &h(0x91),
+            0,
+            32,
+            2,
+            easy_target(),
+        );
+        let tickets_b = grind_settlement(
+            &base,
+            &contribs,
+            &Context::none(),
+            &FocusingParams::default(),
+            &beacon_b,
+            &cluster_b,
+            &h(0x92),
+            0,
+            32,
+            2,
+            easy_target(),
+        );
+        assert!(!tickets_a.is_empty());
+        assert!(!tickets_b.is_empty());
+
+        let cert_a = certify_ticket(
+            &base,
+            &contribs,
+            &Context::none(),
+            &FocusingParams::default(),
+            &beacon_a,
+            &cluster_a,
+            &tickets_a[0],
+        )
+        .unwrap();
+        let cert_b = certify_ticket(
+            &base,
+            &contribs,
+            &Context::none(),
+            &FocusingParams::default(),
+            &beacon_b,
+            &cluster_b,
+            &tickets_b[0],
+        )
+        .unwrap();
+
+        // cert_b's seal is honestly proven — just for a different (beacon,
+        // cluster). Splice it onto cert_a's ticket/order: everything the
+        // pre-fix verifier checked (win-test on cert_a.ticket, replay,
+        // cert_b.seal's own internal consistency, cert_a.order) still holds.
+        let spliced = CertifiedTicket {
+            ticket: cert_a.ticket.clone(),
+            seal: cert_b.seal.clone(),
+            order: cert_a.order.clone(),
+        };
+
+        assert!(!verify_certified_ticket(
+            &base,
+            &contribs,
+            &Context::none(),
+            &FocusingParams::default(),
+            &beacon_a,
+            &cluster_a,
+            easy_target(),
+            &spliced,
+        ));
     }
 
     #[test]

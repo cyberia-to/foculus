@@ -214,7 +214,10 @@ pub enum ProofError {
     Empty,
 }
 
-fn ticket_statement(beacon: &[u8; 32], cluster: &[u8; 32], k: u64) -> Statement {
+/// The statement an honest [`TicketProver::seal`] binds for `(beacon, cluster, k)`.
+/// Exported so a verifier can recompute it and compare against a seal's
+/// `statement`, instead of trusting the seal's self-reported binding.
+pub fn ticket_statement(beacon: &[u8; 32], cluster: &[u8; 32], k: u64) -> Statement {
     let mut input = [0u8; 32];
     input[..8].copy_from_slice(&k.to_le_bytes());
     let mut out_buf = Vec::with_capacity(64);
