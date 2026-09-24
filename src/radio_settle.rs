@@ -20,9 +20,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use iroh::address_lookup::MdnsAddressLookup;
 use iroh::address_lookup::memory::MemoryLookup;
 use iroh::endpoint::Connection;
+use iroh::endpoint::presets::Minimal;
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
 use iroh::{Endpoint, EndpointAddr, EndpointId, RelayMode, SecretKey};
 use tokio::sync::RwLock;
@@ -106,26 +106,35 @@ pub struct SettleRadio {
 }
 
 impl SettleRadio {
-    /// Start on a fixed port with mDNS discovery (production-like).
+    /// Start on a fixed port with known peer addresses (production-like).
+    ///
+    /// iroh 1.x dropped `address-lookup-mdns` (see `audit/net-feature-ed25519-dalek-pin.md`
+    /// and `audit/row-21-settle-radio-dependency-2026-09-24.md`): there is no automatic
+    /// local-network peer discovery upstream any more. Peers are dialed by their known
+    /// `EndpointAddr` (already how `node.rs`'s `SyncNode` and this crate's tests work), so an
+    /// empty `MemoryLookup` that callers populate via `add_peer_addr` is a correct, not merely
+    /// interim, substitute here — not a discovery mechanism, a peer-address book.
     pub async fn start(data_dir: &Path, port: u16) -> Result<Self> {
         std::fs::create_dir_all(data_dir)?;
         let key = load_or_create_key(&data_dir.join("settle_secret.key"))?;
         let bind = SocketAddrV4::new(std::net::Ipv4Addr::UNSPECIFIED, port);
-        let endpoint = Endpoint::builder()
+        let lookup = MemoryLookup::default();
+        let endpoint = Endpoint::builder(Minimal)
             .relay_mode(RelayMode::Disabled)
             .secret_key(key)
-            .address_lookup(MdnsAddressLookup::builder())
+            .address_lookup(lookup.clone())
             .bind_addr(bind)
             .context("bind addr")?
             .bind()
             .await
             .context("bind endpoint")?;
-        Self::from_endpoint(endpoint, None).await
+        lookup.add_endpoint_info(endpoint.addr());
+        Self::from_endpoint(endpoint, Some(lookup)).await
     }
 
-    /// Start with a shared MemoryLookup (multi-endpoint tests, no mDNS).
+    /// Start with a shared MemoryLookup (multi-endpoint tests, or a caller-owned peer book).
     pub async fn start_memory(lookup: MemoryLookup, secret: SecretKey) -> Result<Self> {
-        let endpoint = Endpoint::builder()
+        let endpoint = Endpoint::builder(Minimal)
             .relay_mode(RelayMode::Disabled)
             .secret_key(secret)
             .address_lookup(lookup.clone())
@@ -169,7 +178,7 @@ impl SettleRadio {
         self.state.write().await.peers.insert(addr.id, addr);
     }
 
-    /// Add peer by endpoint id only (relies on mDNS / prior lookup).
+    /// Add peer by endpoint id only (relies on a prior `add_peer_addr` for a dialable address).
     pub async fn add_peer_id(&self, id: EndpointId) {
         self.state
             .write()
@@ -319,7 +328,7 @@ fn load_or_create_key(path: &Path) -> Result<SecretKey> {
             .map_err(|_| anyhow::anyhow!("bad settle secret key"))?;
         Ok(SecretKey::from(arr))
     } else {
-        let key = SecretKey::generate(&mut rand::rng());
+        let key = SecretKey::generate();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -402,8 +411,8 @@ mod tests {
     #[tokio::test]
     async fn two_endpoints_exchange_self_acc() {
         let lookup = MemoryLookup::new();
-        let k1 = SecretKey::generate(&mut rand::rng());
-        let k2 = SecretKey::generate(&mut rand::rng());
+        let k1 = SecretKey::generate();
+        let k2 = SecretKey::generate();
         let a = SettleRadio::start_memory(lookup.clone(), k1)
             .await
             .expect("a");
@@ -477,19 +486,19 @@ mod tests {
         let lookup = MemoryLookup::new();
         let miner_a = SettleRadio::start_memory(
             lookup.clone(),
-            SecretKey::generate(&mut rand::rng()),
+            SecretKey::generate(),
         )
         .await
         .unwrap();
         let miner_b = SettleRadio::start_memory(
             lookup.clone(),
-            SecretKey::generate(&mut rand::rng()),
+            SecretKey::generate(),
         )
         .await
         .unwrap();
         let settler = SettleRadio::start_memory(
             lookup.clone(),
-            SecretKey::generate(&mut rand::rng()),
+            SecretKey::generate(),
         )
         .await
         .unwrap();

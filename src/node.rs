@@ -13,8 +13,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use iroh::address_lookup::MdnsAddressLookup;
+use iroh::address_lookup::memory::MemoryLookup;
 use iroh::endpoint::Connection;
+use iroh::endpoint::presets::Minimal;
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
 use iroh::{Endpoint, EndpointId, RelayMode, SecretKey};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -110,17 +111,20 @@ impl SyncNode {
             let bytes32: [u8; 32] = bytes.try_into().map_err(|_| anyhow::anyhow!("bad key file"))?;
             SecretKey::from(bytes32)
         } else {
-            let key = SecretKey::generate(&mut rand::rng());
+            let key = SecretKey::generate();
             std::fs::write(&key_path, key.to_bytes())?;
             key
         };
 
-        // Create iroh endpoint with mDNS discovery and fixed port.
+        // iroh 1.x dropped `address-lookup-mdns` (no automatic local-network discovery
+        // upstream any more); peers are already dialed below by their known `EndpointAddr`
+        // (parsed from `peers.json`), so an empty `MemoryLookup` is a correct peer-address
+        // book here, not a discovery stand-in.
         let bind_addr = std::net::SocketAddrV4::new(std::net::Ipv4Addr::UNSPECIFIED, port);
-        let endpoint = Endpoint::builder()
+        let endpoint = Endpoint::builder(Minimal)
             .relay_mode(RelayMode::Disabled)
             .secret_key(secret_key)
-            .address_lookup(MdnsAddressLookup::builder())
+            .address_lookup(MemoryLookup::default())
             .bind_addr(bind_addr)
             .context("invalid bind addr")?
             .bind()
