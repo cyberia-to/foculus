@@ -666,4 +666,59 @@ mod tests {
         assert!(verify_receipt(&rec));
         assert_eq!(share_of(&rec, &h(10)), 1000);
     }
+
+    #[test]
+    fn verify_receipt_accepts_a_fold_seal_from_a_different_epoch() {
+        // Sibling of verify_receipt_accepts_a_ticket_seal_from_a_different_epoch,
+        // for the other seal field. receipt_hash covers (epoch, beacon, shares)
+        // only; verify_receipt's fold_seal check calls verify_fold_seal, which
+        // checks only the seal's own internal HyperNova consistency, never that
+        // it was proven for *this* receipt's beacon and claims_root. So a
+        // fold_seal honestly proven for a different epoch still verifies once
+        // spliced onto an unrelated receipt with the same epoch/beacon/shares.
+        let params = FocusingParams::default();
+        let policy = TicketPolicy { want: 4, max_attempts: 64, miner: h(10), ..TicketPolicy::default() };
+        let claim_a = claim_from_links(h(0xA1), h(10), vec![Link::stake(h(2), h(1), 8000)], 1);
+        let genuine = settle_epoch_tickets(
+            1,
+            &GENESIS_PREV,
+            &base(),
+            &[claim_a],
+            &Context::none(),
+            &params,
+            1000,
+            &policy,
+        )
+        .unwrap();
+        assert!(genuine.fold_seal.is_some(), "this settlement must take the HyperNova-proven fold path");
+
+        let policy_b = TicketPolicy { want: 4, max_attempts: 64, miner: h(11), ..TicketPolicy::default() };
+        let claim_b = claim_from_links(h(0xB2), h(11), vec![Link::stake(h(3), h(1), 6000)], 1);
+        let other = settle_epoch_tickets(
+            2,
+            &GENESIS_PREV,
+            &base(),
+            &[claim_b],
+            &Context::none(),
+            &params,
+            1000,
+            &policy_b,
+        )
+        .unwrap();
+        assert!(other.fold_seal.is_some());
+        assert_ne!(genuine.beacon, other.beacon, "must be genuinely different contexts");
+
+        // Splice: keep the genuine receipt's epoch/beacon/shares (and hence its
+        // receipt_hash) intact, but carry the other settlement's fold_seal.
+        let mut spliced = genuine.clone();
+        spliced.fold_seal = other.fold_seal;
+
+        // The bug: this still verifies. A sound check must reject a seal that
+        // was never proven for this receipt's beacon and claims_root.
+        assert!(
+            verify_receipt(&spliced),
+            "documents the gap: verify_receipt does not bind fold_seal \
+             to the receipt's own epoch, beacon or claims_root"
+        );
+    }
 }
