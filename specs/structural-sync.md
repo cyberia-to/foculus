@@ -7,15 +7,15 @@ crystal-domain: cyber
 
 one mechanism at three scales. a [[signal]] is the universal unit of state change — created on a neuron, merged between neurons, submitted to the network, queried by clients. the signal structure is identical at every scale. only the merge function changes.
 
-this is a **cross-cutting protocol**. it spans five repos — no single component owns it. each layer maps to a specific owner:
+this is a **cross-cutting protocol**. it spans four repos — no single component owns it. each layer maps to a specific owner (the former `cyb/sync` repo merged into foculus; [[soft3/roadmap/component-boundaries|component boundaries]] records the split):
 
 | layer | mechanism | owner |
 |-------|-----------|-------|
 | 1 validity | zheng proof per signal | [[cybergraph]] — validates before storing |
-| 2 ordering | hash chain + VDF + Merkle clock + step | [[cybergraph]] — signal lifecycle, `SignalChain` |
+| 2 ordering | hash chain + VDF + Merkle clock + step | [[foculus]] — `chain`, `vdf` ([[delay]]); cybergraph calls them at [[cybergraph/specs/order|order]] |
 | 3 completeness | Lens per source | [[bbg]] — serves opening proofs against BBG_root |
-| 4 availability | algebraic DAS + erasure coding | [[radio]] / [[cyb/sync]] — content distribution |
-| 5 merge local | CRDT G-Set | [[cyb/sync]] — device-level convergence |
+| 4 availability | algebraic DAS + erasure coding | [[foculus]] — [[erasure]] (`erasure`, `das`); [[radio]] transmits the shards |
+| 5 merge local | CRDT G-Set | [[foculus]] — `store`, `node`: device-level convergence |
 | 5 merge global | foculus φ* convergence | [[foculus]] — network-level finality |
 
 layers 1-4 are identical at all scales. layer 5 is the only scale-dependent component.
@@ -24,13 +24,11 @@ layers 1-4 are identical at all scales. layer 5 is the only scale-dependent comp
 
 **[[bbg]]** is a pure state library: `apply(tx)` → state transition, `prove(key)` → Lens opening, `root()` → BBG_root. no network, no sync, no signal structure. bbg is to cybergraph what a database engine is to a schema: **cybergraph defines WHAT, bbg implements HOW**.
 
-**[[cybergraph]]** owns the signal lifecycle: receives signals, validates (layers 1–2), calls `bbg.apply()`, routes events to tru/glia/mir. it owns `Signal`, `SignalChain`, hash chain, equivocation detection, and the local sync protocol. signal ordering logic does not belong in bbg.
+**[[cybergraph]]** owns the signal lifecycle: receives signals, validates (layer 1), orders (layer 2, by calling foculus — [[cybergraph/specs/order|order]]), calls `bbg.apply()`, routes events to tru/glia/mir. it re-exports foculus's `Signal`, `SignalChain` and `VdfProof`; it does not implement them. signal ordering logic does not belong in bbg.
 
-**[[cyb/sync]]** is layer 4 only: erasure-coded blob storage across a neuron's device set. no signal awareness, no BBG_root knowledge. called by cybergraph when distributing content chunks.
+**[[foculus]]** is the reconciliation engine: layer 2 ordering (`chain`, `vdf`), layer 4 availability (`erasure`, `das` — [[erasure]]), layer 5 local merge (`store`, `node`: the device-level CRDT) and layer 5 global merge (fork-choice over φ*, finality from topology). no BBG_root authorship — that is bbg's.
 
-**[[radio]]** is pure transport: QUIC, BAO, gossip. no semantic awareness.
-
-**[[foculus]]** is layer 5 global: φ* convergence, finality from topology.
+**[[radio]]** is pure transport: QUIC, verified streaming, gossip. no semantic awareness.
 
 ## signal lifecycle
 
@@ -145,7 +143,7 @@ owner: cybergraph validates before calling bbg.apply()
 
 ### layer 2: ordering
 
-four mechanisms establish temporal structure without consensus. owned by cybergraph — `SignalChain` lives there, not in bbg.
+four mechanisms establish temporal structure without consensus. owned by foculus — `SignalChain` lives in `foculus/src/chain.rs`, the VDF in `foculus/src/vdf.rs` ([[delay]]); cybergraph re-exports both and calls them at [[cybergraph/specs/order|order]].
 
 **hash chain** — each neuron chains signals via the `prev` field:
 
@@ -222,7 +220,7 @@ NETWORK (BBG_poly dimension):
 
 ### layer 4: availability
 
-owned by radio / cyb/sync.
+owned by foculus ([[erasure]]); radio transmits the shards.
 
 ```
 2D Reed-Solomon erasure coding over Goldilocks field.
@@ -241,7 +239,7 @@ sampling: O(√n) random cells with Lens openings (algebraic DAS)
 
 the only scale-dependent layer.
 
-**local (CRDT) — cyb/sync:**
+**local (CRDT) — foculus `store`:**
 ```
 mechanism: G-Set union (grow-only set of signals)
   commutative, associative, idempotent
@@ -263,7 +261,7 @@ mechanism: φ* convergence (stake-weighted attention)
 
 ## local sync protocol
 
-two neurons of the same identity reconnect. owned by cybergraph.
+two neurons of the same identity reconnect. owned by foculus (`node`).
 
 ```
 1. COMPARE merkle_clock roots                    O(1)
@@ -392,7 +390,7 @@ trust: only BBG_root (from consensus). peer is completely untrusted.
 
 ## content sync
 
-file blobs are content-addressed [[particles]]. owned by cyb/sync + radio.
+file blobs are content-addressed [[particles]]. owned by foculus (`store`, `node`); radio transmits.
 
 ```
 layer           mechanism       guarantees
@@ -427,4 +425,4 @@ light client join: < 10 KiB total.
 
 ---
 
-see [[bbg]] for state structure and polynomial commitments. see [[cybergraph]] for signal validation and local sync implementation. see [[foculus]] for global merge. see [[radio]] for transport. see [[cyb/sync]] for device-level content availability.
+see [[bbg]] for state structure and polynomial commitments. see [[cybergraph]] for signal validation. see [[foculus]] for ordering, availability and merge — local and global. see [[radio]] for transport.

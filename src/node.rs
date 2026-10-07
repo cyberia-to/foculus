@@ -5,8 +5,9 @@
 //! Layer 4 (availability): DAS commitment in FileEntry; sampling on sync.
 //! Layer 5 (merge): LWW-Element-Set CRDT with deterministic conflict resolution.
 //!
-//! Signal ordering (layer 2: VDF, hash chain, equivocation detection) is owned
-//! by cybergraph, not this crate. See cybergraph/src/vdf.rs and chain.rs.
+//! Signal ordering (layer 2: VDF, hash chain, equivocation detection) is this
+//! crate's too — see `vdf.rs` and `chain.rs`; this module is the device sync
+//! daemon over layers 3-5 only.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
