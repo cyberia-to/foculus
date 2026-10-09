@@ -59,6 +59,8 @@ pub mod rewards;
 pub mod settlement;
 pub mod settle_tickets;
 pub mod cluster;
+#[cfg(feature = "accumulated-settlement")]
+pub mod cluster_accumulated;
 pub mod ticket_proof;
 pub mod tickets;
 pub mod tip;
