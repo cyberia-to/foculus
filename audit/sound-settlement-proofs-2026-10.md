@@ -88,6 +88,11 @@ Plainly:
    module and not re-exported; foculus carries a port pinned by a differential
    test. Export it (and a non-panicking `spmv_native`, which indexes edges
    unchecked).
+   Update 2026-10-09 (zheng #47): `phi` now compiles only with zheng's
+   `legacy` feature, so foculus also owns `SparseGraph` and `TriKernelParams`;
+   the differential test became `phi_star_matches_the_zheng_vectors`, frozen
+   values zheng 0.4 produced (φ* after 6 steps and three commitments).
+   foculus has no zheng `phi` dependency left.
 2. `certificate::verify` returns `()`; there is no way to get the assembled
    witness `z` it checked. foculus re-assembles and re-checks the rows itself so
    its native checks read the same vector. A `verify` returning `CCSWitness`

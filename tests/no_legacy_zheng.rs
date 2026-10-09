@@ -13,12 +13,11 @@ const ALLOWED: &[&str] = &[
     "zheng::types::CCSInstance",
     "zheng::types::CCSWitness",
     "zheng::types::SparseMatrix",
-    "zheng::phi::SparseGraph",
-    "zheng::phi::TriKernelParams",
 ];
 
-/// Differential test pinning foculus's tri-kernel port to zheng's.
-const TEST_ONLY: &[(&str, &str)] = &[("phi_tests.rs", "zheng::phi::prove_phi_star")];
+/// Test-only exceptions (file, path). None: the tri-kernel port is pinned to
+/// frozen zheng 0.4 vectors, not to zheng's legacy `phi`.
+const TEST_ONLY: &[(&str, &str)] = &[];
 
 fn ident(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_'

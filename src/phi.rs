@@ -17,16 +17,76 @@
 //! Cost: `iterations × (4 SpMV + 3n field inversions)`. A succinct φ* proof
 //! needs the tri-kernel as a step relation under accumulation (phase 3).
 //!
-//! [`trikernel_step`] is a port of zheng `phi::trikernel_step`, which zheng
-//! does not export; `phi_star_matches_zheng` pins the two together.
+//! [`trikernel_step`], [`SparseGraph`] and [`TriKernelParams`] are ports of
+//! zheng's `phi` module, which left zheng's default build with the legacy
+//! API; `phi_star_matches_the_zheng_vectors` pins φ* and the graph
+//! commitment to values zheng 0.4 produced.
 
+use cyber_hemera::hash as hemera_hash;
 use nebu::Goldilocks as F;
-use zheng::phi::{SparseGraph, TriKernelParams};
 
 use crate::proof::digest;
 
 const GRAPH_DOMAIN: &[u8] = b"foculus-phi-graph-v1";
 const VECTOR_DOMAIN: &[u8] = b"foculus-phi-vector-v1";
+
+/// Directed weighted graph: edge `(row, col, w)` adds `w · x[col]` into `y[row]`.
+#[derive(Clone, Debug)]
+pub struct SparseGraph {
+    pub n: usize,
+    pub edges: Vec<(usize, usize, F)>,
+}
+
+impl SparseGraph {
+    pub fn empty(n: usize) -> Self {
+        Self { n, edges: Vec::new() }
+    }
+
+    pub fn add(&mut self, row: usize, col: usize, w: F) {
+        debug_assert!(row < self.n && col < self.n);
+        self.edges.push((row, col, w));
+    }
+
+    /// hemera hash of `n ‖ (row, col, w)*`, each a little-endian u64.
+    pub fn commitment(&self) -> [u8; 32] {
+        let mut buf = Vec::with_capacity(8 + self.edges.len() * 24);
+        buf.extend_from_slice(&(self.n as u64).to_le_bytes());
+        for &(r, c, w) in &self.edges {
+            buf.extend_from_slice(&(r as u64).to_le_bytes());
+            buf.extend_from_slice(&(c as u64).to_le_bytes());
+            buf.extend_from_slice(&w.as_u64().to_le_bytes());
+        }
+        *hemera_hash(&buf).as_bytes()
+    }
+}
+
+/// Tri-kernel weights: diffusion, springs, heat, and the teleport mixture.
+#[derive(Clone, Debug)]
+pub struct TriKernelParams {
+    pub lambda_d: F,
+    pub lambda_s: F,
+    pub lambda_h: F,
+    pub alpha: F,
+}
+
+impl Default for TriKernelParams {
+    fn default() -> Self {
+        Self::standard()
+    }
+}
+
+impl TriKernelParams {
+    /// λd = 1/2, λs = 3/10, λh = 1/5, α = 15/100 as field fractions.
+    pub fn standard() -> Self {
+        let inv = |n: u64| F::new(n).inv();
+        Self {
+            lambda_d: inv(2),
+            lambda_s: F::new(3) * inv(10),
+            lambda_h: inv(5),
+            alpha: F::new(15) * inv(100),
+        }
+    }
+}
 
 /// The public inputs of a φ* computation.
 pub struct PhiGraph<'a> {

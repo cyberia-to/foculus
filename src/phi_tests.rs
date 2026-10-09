@@ -45,15 +45,38 @@ impl Fixture {
     }
 }
 
-/// The port and zheng's own tri-kernel produce the same φ*.
+/// φ* after 6 steps and the graph commitments, as zheng 0.4's
+/// `phi::prove_phi_star` and `SparseGraph::commitment` produced them for this
+/// fixture (feature `legacy`, before the port left zheng behind).
 #[test]
-fn phi_star_matches_zheng() {
+fn phi_star_matches_the_zheng_vectors() {
     let f = Fixture::new();
     let ours = compute_phi_star(&f.graph(), &f.phi0, 6).unwrap();
-    let theirs =
-        zheng::phi::prove_phi_star(&f.t, &f.s, &f.degree, &f.teleport, &f.phi0, 6, &f.params)
-            .unwrap();
-    assert_eq!(ours.phi_star, theirs.phi_star);
+    assert_eq!(
+        ours.phi_star.iter().map(|v| v.as_u64()).collect::<Vec<_>>(),
+        [13624355315955472899, 2999415092397749681, 6972205826464312662, 13297511904011633401]
+    );
+    assert_eq!(
+        f.t.commitment(),
+        [
+            243, 42, 178, 220, 193, 59, 124, 67, 120, 191, 136, 50, 236, 135, 202, 201, 166, 40,
+            63, 111, 23, 176, 90, 200, 128, 98, 155, 254, 239, 117, 55, 31
+        ]
+    );
+    assert_eq!(
+        f.s.commitment(),
+        [
+            66, 245, 177, 166, 177, 33, 12, 233, 103, 42, 16, 63, 248, 175, 56, 197, 25, 69, 33,
+            158, 132, 163, 122, 204, 16, 137, 215, 33, 12, 143, 223, 61
+        ]
+    );
+    assert_eq!(
+        f.graph().commitment(),
+        [
+            30, 53, 123, 32, 139, 107, 72, 242, 18, 215, 49, 68, 230, 242, 197, 200, 245, 227,
+            243, 159, 108, 11, 22, 163, 114, 124, 127, 209, 19, 62, 106, 140
+        ]
+    );
 }
 
 #[test]
