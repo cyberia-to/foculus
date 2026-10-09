@@ -3,354 +3,234 @@
 // crystal-type: source
 // crystal-domain: cyber
 // ---
-//! HyperNova σ for settlement tickets and fold steps.
+//! Settlement ticket proofs (specs/fold-mining.md, tru/specs/rewards.md §7).
 //!
-//! Same step shape as the tip fold (one add row of zheng's universal step
-//! CCS, see [`crate::step`]): each ticket or fold step hashes its public
-//! material into a satisfying row. Sequential folds share one accumulator;
-//! [`decide`] seals an O(1) SuperSpartan proof. Binding caveat in
-//! [`crate::step`].
+//! The statement of a ticket `(ν, n, m, commit, score)` at beacon `b_E` for
+//! cluster `C` over the public claim set:
+//!
+//! ```text
+//! π(n)  = ordering(b_E, n)                                   statement check
+//! m[π_j] = v_j − v_{j−1},  v_{−1} = 0,  j = 0..|contribs|    relation (CCS)
+//! v_j   = v★(π_0..π_j) = impulse(base, prefix_j).directed    witness check
+//! commit = commit(m)                                         statement check
+//! score = H(b_E ‖ C ‖ n ‖ id(ν) ‖ commit) < target           statement check
+//! ```
+//!
+//! The coalition values `v_j` are the witness: disclosed in the public
+//! profile, checked against `tru::impulse` natively because no CCS for the
+//! tri-kernel impulse exists yet. That native check is the gap a succinct
+//! profile must close; until then verifying a ticket costs one impulse per
+//! contributor — the same as recomputing it.
 
-use cyber_hemera::hash as hemera_hash;
-use zheng::types::{Accumulator, Proof, ProofParams, Statement};
-use zheng::{Transcript, decide, fold};
+use nebu::Goldilocks as F;
+use tru::{Context, FocusingParams, Link};
+use zheng::types::{CCSInstance, CCSWitness};
 
-use crate::step;
-use crate::tickets::{ClusterAcc, SettlementTicket};
+use crate::proof::{self, Lin, Proof, ProofError, R1cs, Relation, Witnessed, digest};
+use crate::settlement::{self, Contribution};
+use crate::tickets::{ClusterId, SettlementTicket, commit_marginals, settle_score};
 
-const PROGRAM: [u8; 32] = *b"foculus-ticket-fold-v0\0\0\0\0\0\0\0\0\0\0";
+const STATEMENT_DOMAIN: &[u8] = b"foculus-ticket-proof-v1";
 
-/// Sealed HyperNova state for a batch of tickets / fold steps.
+/// The public data every ticket of a cluster is checked against.
+#[derive(Clone, Copy)]
+pub struct TicketInputs<'a> {
+    pub base: &'a [Link],
+    pub contribs: &'a [Contribution],
+    pub ctx: &'a Context,
+    pub params: &'a FocusingParams,
+}
+
+/// A ticket and the proof of its marginals.
 #[derive(Clone, Debug)]
-pub struct FoldSeal {
-    pub acc: Accumulator,
+pub struct ProvenTicket {
+    pub ticket: SettlementTicket,
     pub proof: Proof,
-    pub statement: Statement,
-    /// How many fold steps were absorbed.
-    pub steps: u64,
 }
 
-/// Prover that folds ticket/fold witnesses into one HyperNova accumulator.
-pub struct TicketProver {
-    acc: Accumulator,
-    transcript: Transcript,
-    steps: u64,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TicketError {
+    /// Marginal vector length differs from the contributor count, or no contributors.
+    Shape,
+    /// `commit(m)` differs from the ticket's commitment.
+    Commitment,
+    /// Recomputed score differs from the ticket's score.
+    Score,
+    /// Score is not below the target.
+    Lost,
+    Proof(ProofError),
 }
 
-impl TicketProver {
-    pub fn new() -> Self {
+/// The relation of one ticket, derived from public data.
+pub struct TicketRelation<'a> {
+    inputs: TicketInputs<'a>,
+    beacon: [u8; 32],
+    cluster: ClusterId,
+    ticket: &'a SettlementTicket,
+    order: Vec<usize>,
+}
+
+impl<'a> TicketRelation<'a> {
+    pub fn new(
+        inputs: TicketInputs<'a>,
+        beacon: &[u8; 32],
+        cluster: &ClusterId,
+        ticket: &'a SettlementTicket,
+    ) -> Self {
         Self {
-            acc: step::blank_acc(),
-            transcript: Transcript::new(),
-            steps: 0,
+            order: settlement::ordering(inputs.contribs.len(), beacon, ticket.nonce),
+            inputs,
+            beacon: *beacon,
+            cluster: *cluster,
+            ticket,
         }
     }
 
-    /// Fold one settlement ticket (binds beacon ‖ cluster ‖ nonce ‖ miner ‖ commit).
-    pub fn fold_settlement(
-        &mut self,
-        beacon: &[u8; 32],
-        cluster: &[u8; 32],
-        ticket: &SettlementTicket,
-    ) -> Result<(), ProofError> {
-        let mut mat = Vec::with_capacity(32 + 32 + 8 + 32 + 32);
-        mat.extend_from_slice(beacon);
-        mat.extend_from_slice(cluster);
-        mat.extend_from_slice(&ticket.nonce.to_le_bytes());
-        mat.extend_from_slice(&ticket.miner);
-        mat.extend_from_slice(&ticket.commitment);
-        self.fold_material(&mat)
+    fn n(&self) -> usize {
+        self.inputs.contribs.len()
     }
 
-    /// Fold one monoid fold step (binds level ‖ pair_id ‖ left ‖ right ‖ result).
-    pub fn fold_step_material(
-        &mut self,
-        beacon: &[u8; 32],
-        cluster: &[u8; 32],
-        level: u32,
-        pair_id: &[u8; 32],
-        left: &ClusterAcc,
-        right: &ClusterAcc,
-        result: &ClusterAcc,
-    ) -> Result<(), ProofError> {
-        let mut mat = Vec::with_capacity(32 * 5 + 4);
-        mat.extend_from_slice(beacon);
-        mat.extend_from_slice(cluster);
-        mat.extend_from_slice(b"fold");
-        mat.extend_from_slice(&level.to_le_bytes());
-        mat.extend_from_slice(pair_id);
-        mat.extend_from_slice(&left.commitment);
-        mat.extend_from_slice(&right.commitment);
-        mat.extend_from_slice(&result.commitment);
-        self.fold_material(&mat)
+    /// Column of contributor `i`'s marginal.
+    fn m_col(i: usize) -> usize {
+        1 + i
     }
 
-    fn fold_material(&mut self, material: &[u8]) -> Result<(), ProofError> {
-        let witness = step::add_step(material);
-        if self.steps == 0 {
-            self.transcript = Transcript::new();
-        }
-        fold(&mut self.acc, step::instance(), &witness, &mut self.transcript)
-            .map_err(|_| ProofError::FoldFailed)?;
-        self.steps = self.steps.saturating_add(1);
-        Ok(())
+    /// Column of the coalition value after the first `j + 1` of π.
+    fn v_col(&self, j: usize) -> usize {
+        1 + self.n() + j
     }
 
-    /// Decide SuperSpartan on the accumulator. Statement binds (beacon, cluster, k).
-    pub fn seal(
-        &self,
-        beacon: &[u8; 32],
-        cluster: &[u8; 32],
-        sample_count: u64,
-    ) -> Result<FoldSeal, ProofError> {
-        if self.steps == 0 {
-            return Err(ProofError::Empty);
-        }
-        let statement = ticket_statement(beacon, cluster, sample_count);
-        let proof = decide(&self.acc, &statement, &ProofParams::default())
-            .map_err(|_| ProofError::DecideFailed)?;
-        if !verify_seal(&self.acc, &proof, &statement) {
-            return Err(ProofError::VerifyFailed);
-        }
-        Ok(FoldSeal {
-            acc: self.acc.clone(),
-            proof,
-            statement,
-            steps: self.steps,
-        })
+    /// `v_j = v★(π_0..π_j)` for every prefix — the expensive part.
+    fn coalition_values(&self) -> Vec<F> {
+        let mut prefix: Vec<&Contribution> = Vec::with_capacity(self.n());
+        self.order
+            .iter()
+            .map(|&i| {
+                prefix.push(&self.inputs.contribs[i]);
+                settlement::value(self.inputs.base, &prefix, self.inputs.ctx, self.inputs.params)
+                    .raw()
+            })
+            .collect()
     }
 }
 
-impl Default for TicketProver {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Verify a sealed fold proof (O(1) SuperSpartan check).
-pub fn verify_seal(acc: &Accumulator, proof: &Proof, statement: &Statement) -> bool {
-    step::verify_group(acc, proof, statement)
-}
-
-/// Verify a [`FoldSeal`] end-to-end.
-pub fn verify_fold_seal(seal: &FoldSeal) -> bool {
-    verify_seal(&seal.acc, &seal.proof, &seal.statement)
-        && seal.acc.step_count() == seal.steps
-        && seal.steps > 0
-}
-
-/// Prove a batch of settlement tickets into one seal.
-pub fn prove_settlement_batch(
-    beacon: &[u8; 32],
-    cluster: &[u8; 32],
-    tickets: &[SettlementTicket],
-) -> Result<FoldSeal, ProofError> {
-    if tickets.is_empty() {
-        return Err(ProofError::Empty);
-    }
-    let mut prover = TicketProver::new();
-    for t in tickets {
-        prover.fold_settlement(beacon, cluster, t)?;
-    }
-    prover.seal(beacon, cluster, tickets.len() as u64)
-}
-
-/// Prove a fold-tree assembly: for each binary merge, fold HyperNova step.
-///
-/// Single-leaf trees still get one HyperNova step binding the leaf commitment
-/// (self-fold root), so seal is never empty when samples exist.
-pub fn prove_fold_tree(
-    beacon: &[u8; 32],
-    cluster: &[u8; 32],
-    leaves: &[ClusterAcc],
-) -> Result<(ClusterAcc, FoldSeal), ProofError> {
-    if leaves.is_empty() {
-        return Err(ProofError::Empty);
-    }
-    let mut prover = TicketProver::new();
-    let mut level: Vec<ClusterAcc> = leaves.to_vec();
-    let mut lvl = 0u32;
-
-    if level.len() == 1 {
-        // Bind the sole self-accumulator as a root commitment step.
-        let root = level[0].clone();
-        let empty = ClusterAcc::empty(root.sum_m.len());
-        let pid = crate::tickets::pair_id(&root, &empty);
-        prover.fold_step_material(beacon, cluster, 0, &pid, &root, &empty, &root)?;
-        let seal = prover.seal(beacon, cluster, root.k)?;
-        return Ok((root, seal));
+impl Relation for TicketRelation<'_> {
+    fn statement(&self) -> [u8; 32] {
+        let n = (self.n() as u64).to_le_bytes();
+        digest(
+            STATEMENT_DOMAIN,
+            &[
+                &self.beacon,
+                &self.cluster,
+                &self.ticket.nonce.to_le_bytes(),
+                &self.ticket.miner,
+                &self.ticket.commitment,
+                &n,
+            ],
+        )
     }
 
-    while level.len() > 1 {
-        let mut next = Vec::new();
-        let mut i = 0;
-        while i < level.len() {
-            if i + 1 >= level.len() {
-                next.push(level[i].clone());
-                break;
+    fn instance(&self) -> CCSInstance {
+        let n = self.n();
+        let mut cs = R1cs::new(1 + 2 * n);
+        for (j, &i) in self.order.iter().enumerate() {
+            let mut row: Lin = vec![(self.v_col(j), F::ONE), (Self::m_col(i), -F::ONE)];
+            if j > 0 {
+                row.push((self.v_col(j - 1), -F::ONE));
             }
-            let left = &level[i];
-            let right = &level[i + 1];
-            let result = crate::tickets::fold_acc(left, right);
-            let pid = crate::tickets::pair_id(left, right);
-            prover.fold_step_material(beacon, cluster, lvl, &pid, left, right, &result)?;
-            next.push(result);
-            i += 2;
+            cs.zero(row);
         }
-        level = next;
-        lvl = lvl.saturating_add(1);
+        cs.instance()
     }
-    let root = level.into_iter().next().unwrap_or_default();
-    let k = root.k;
-    let seal = prover.seal(beacon, cluster, k)?;
-    Ok((root, seal))
+
+    fn public(&self) -> Vec<(usize, F)> {
+        self.ticket
+            .marginals
+            .iter()
+            .enumerate()
+            .map(|(i, m)| (Self::m_col(i), m.raw()))
+            .collect()
+    }
+
+    fn check_witness(&self, z: &[F]) -> bool {
+        let values = self.coalition_values();
+        values
+            .iter()
+            .enumerate()
+            .all(|(j, v)| z.get(self.v_col(j)) == Some(v))
+    }
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum ProofError {
-    FoldFailed,
-    DecideFailed,
-    VerifyFailed,
-    Empty,
+impl Witnessed for TicketRelation<'_> {
+    fn witness(&self) -> Option<CCSWitness> {
+        let instance_cols = self.instance().num_cols;
+        let mut z = vec![F::ZERO; instance_cols];
+        z[0] = F::ONE;
+        for (col, v) in self.public() {
+            z[col] = v;
+        }
+        for (j, v) in self.coalition_values().into_iter().enumerate() {
+            z[self.v_col(j)] = v;
+        }
+        Some(CCSWitness { z })
+    }
 }
 
-fn ticket_statement(beacon: &[u8; 32], cluster: &[u8; 32], k: u64) -> Statement {
-    let mut input = [0u8; 32];
-    input[..8].copy_from_slice(&k.to_le_bytes());
-    let mut out_buf = Vec::with_capacity(64);
-    out_buf.extend_from_slice(beacon);
-    out_buf.extend_from_slice(cluster);
-    let output = *hemera_hash(&out_buf)
-        .as_bytes()
-        .first_chunk::<32>()
-        .unwrap_or(&[0u8; 32]);
-    Statement {
-        program_hash: PROGRAM,
-        input_hash: input,
-        output_hash: output,
-        focus_bound: 0,
-        // no look rows in a ticket program: the no-state-read sentinel
-        bbg_root: [0u8; 32],
+/// Statement checks: shape, commitment, score and win test.
+fn check_statement(
+    inputs: &TicketInputs<'_>,
+    beacon: &[u8; 32],
+    cluster: &ClusterId,
+    target: u64,
+    ticket: &SettlementTicket,
+) -> Result<(), TicketError> {
+    let n = inputs.contribs.len();
+    if n == 0 || ticket.marginals.len() != n {
+        return Err(TicketError::Shape);
     }
+    if commit_marginals(&ticket.marginals) != ticket.commitment {
+        return Err(TicketError::Commitment);
+    }
+    let score = settle_score(beacon, cluster, ticket.nonce, &ticket.miner, &ticket.commitment);
+    if score != ticket.score {
+        return Err(TicketError::Score);
+    }
+    if score >= target {
+        return Err(TicketError::Lost);
+    }
+    Ok(())
+}
+
+/// Prove a winning ticket's marginals.
+pub fn prove_ticket(
+    inputs: TicketInputs<'_>,
+    beacon: &[u8; 32],
+    cluster: &ClusterId,
+    target: u64,
+    ticket: &SettlementTicket,
+) -> Result<ProvenTicket, TicketError> {
+    check_statement(&inputs, beacon, cluster, target, ticket)?;
+    let relation = TicketRelation::new(inputs, beacon, cluster, ticket);
+    let proof = proof::prove(&relation).map_err(TicketError::Proof)?;
+    Ok(ProvenTicket {
+        ticket: ticket.clone(),
+        proof,
+    })
+}
+
+/// Verify one ticket: statement checks, then the proof of its marginals.
+pub fn verify_ticket(
+    inputs: TicketInputs<'_>,
+    beacon: &[u8; 32],
+    cluster: &ClusterId,
+    target: u64,
+    proven: &ProvenTicket,
+) -> Result<(), TicketError> {
+    check_statement(&inputs, beacon, cluster, target, &proven.ticket)?;
+    let relation = TicketRelation::new(inputs, beacon, cluster, &proven.ticket);
+    proof::verify(&relation, &proven.proof).map_err(TicketError::Proof)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::settlement::Contribution;
-    use crate::tickets::{easy_target, grind_settlement, self_fold};
-    use nebu::Goldilocks;
-    use tru::{Context, FocusingParams, Fx, Link};
-
-    fn h(b: u8) -> [u8; 32] {
-        let mut x = [0u8; 32];
-        x[0] = b;
-        x
-    }
-
-    fn setup() -> (Vec<Link>, Vec<Contribution>, [u8; 32], [u8; 32]) {
-        let base = vec![
-            Link::stake(h(1), h(2), 100),
-            Link::stake(h(2), h(3), 100),
-            Link::stake(h(3), h(1), 100),
-        ];
-        let contribs = vec![Contribution {
-            neuron: h(10),
-            links: vec![Link::stake(h(2), h(1), 8000)],
-            surprise: Fx::ONE,
-        }];
-        (base, contribs, h(0xBE), h(0xC1))
-    }
-
-    #[test]
-    fn settlement_batch_proves_and_verifies() {
-        let (base, contribs, beacon, cluster) = setup();
-        let tickets = grind_settlement(
-            &base,
-            &contribs,
-            &Context::none(),
-            &FocusingParams::default(),
-            &beacon,
-            &cluster,
-            &h(0x91),
-            0,
-            16,
-            3,
-            easy_target(),
-        );
-        assert_eq!(tickets.len(), 3);
-        let seal = prove_settlement_batch(&beacon, &cluster, &tickets).unwrap();
-        assert!(verify_fold_seal(&seal));
-        assert_eq!(seal.steps, 3);
-    }
-
-    #[test]
-    fn fold_tree_proves_and_verifies() {
-        let (base, contribs, beacon, cluster) = setup();
-        let leaves: Vec<_> = [0xA, 0xB]
-            .iter()
-            .map(|&m| {
-                let t = grind_settlement(
-                    &base,
-                    &contribs,
-                    &Context::none(),
-                    &FocusingParams::default(),
-                    &beacon,
-                    &cluster,
-                    &h(m),
-                    m as u64 * 10,
-                    8,
-                    2,
-                    easy_target(),
-                );
-                self_fold(contribs.len(), &t)
-            })
-            .collect();
-        let (root, seal) = prove_fold_tree(&beacon, &cluster, &leaves).unwrap();
-        assert!(root.k >= 4);
-        assert!(verify_fold_seal(&seal));
-        assert!(seal.steps >= 1);
-    }
-
-    #[test]
-    fn tampered_proof_fails() {
-        let (base, contribs, beacon, cluster) = setup();
-        let tickets = grind_settlement(
-            &base,
-            &contribs,
-            &Context::none(),
-            &FocusingParams::default(),
-            &beacon,
-            &cluster,
-            &h(0x91),
-            0,
-            8,
-            2,
-            easy_target(),
-        );
-        let mut seal = prove_settlement_batch(&beacon, &cluster, &tickets).unwrap();
-        seal.proof.eval_value = Goldilocks::new(seal.proof.eval_value.as_u64().wrapping_add(1));
-        assert!(!verify_fold_seal(&seal));
-    }
-
-    #[test]
-    fn seal_rejects_foreign_statement() {
-        let (base, contribs, beacon, cluster) = setup();
-        let tickets = grind_settlement(
-            &base,
-            &contribs,
-            &Context::none(),
-            &FocusingParams::default(),
-            &beacon,
-            &cluster,
-            &h(0x91),
-            0,
-            8,
-            2,
-            easy_target(),
-        );
-        let seal = prove_settlement_batch(&beacon, &cluster, &tickets).unwrap();
-        let other = ticket_statement(&h(0xEE), &cluster, tickets.len() as u64);
-        assert!(!verify_seal(&seal.acc, &seal.proof, &other));
-    }
-}
+#[path = "ticket_proof_tests.rs"]
+pub(crate) mod tests;

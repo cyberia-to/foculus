@@ -56,7 +56,9 @@ pub struct Signal {
     pub step: u64,
     /// Block height (0 until finalized).
     pub height: u64,
-    pub proof: Option<zheng::Proof>,
+    /// Pay σ or other proof over this signal (`crate::proof`); not covered
+    /// by `content_id`.
+    pub proof: Option<crate::proof::Proof>,
 }
 
 impl Signal {

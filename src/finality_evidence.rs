@@ -84,9 +84,9 @@ impl FinalityEvidence {
     /// (protocol.md step 6). Light clients still verify the binding; the
     /// issuer attests that φ* + certification gate passed.
     ///
-    /// For a full algebraic proof that φ* itself is correct, prove the domain
-    /// graph with `zheng::prove_phi_star` and bind `phi_star_hash` off-band
-    /// (see zheng/specs/phi-spmv.md).
+    /// φ* itself is checked by recomputation over committed graphs: bind a
+    /// [`crate::phi::PhiBinding`] in the epoch certificate.
+    #[allow(clippy::too_many_arguments)]
     pub fn issue_from_domain(
         signal_id: Particle,
         tip: &Tip,
@@ -150,7 +150,7 @@ fn bind(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tip::{Tip, join_with_demo_fold};
+    use crate::tip::{Tip, join_with_demo_chain};
     use bbg::Checkpoint;
 
     #[test]
@@ -196,8 +196,8 @@ mod tests {
     }
 
     #[test]
-    fn certified_evidence_on_fold_tip() {
-        let tip = join_with_demo_fold([3u8; 32], 2);
+    fn certified_evidence_on_chain_tip() {
+        let tip = join_with_demo_chain([3u8; 32], 2);
         let ev = FinalityEvidence::issue_certified([9u8; 32], &tip, &[[8u8; 32]]);
         assert!(ev.verify(&tip));
         assert_eq!(ev.kind, FinalityKind::Certified);

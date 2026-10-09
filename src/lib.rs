@@ -47,7 +47,6 @@ pub mod beacon;
 pub mod epoch;
 pub mod epoch_cert;
 pub mod live;
-pub mod marginal_cert;
 pub mod gossip;
 #[cfg(feature = "net")]
 pub mod radio_settle;
@@ -58,7 +57,8 @@ pub mod wire;
 pub mod reconcile;
 pub mod rewards;
 pub mod settlement;
-pub(crate) mod step;
+pub mod settle_tickets;
+pub mod cluster;
 pub mod ticket_proof;
 pub mod tickets;
 pub mod tip;
@@ -69,13 +69,16 @@ pub use beacon::{
 };
 pub use epoch::{verify_live_receipt, EpochError, EpochPhase, EpochRunner};
 pub use epoch_cert::{
-    issue_epoch_cert, verify_epoch_cert, verify_phi_on_cert, EpochCertificate, SettleVerifyInputs,
+    issue_epoch_cert, verify_epoch_cert, verify_epoch_cert_with_phi, EpochCertificate,
+    PhiVerifyInputs, ReceiptError, SettleVerifyInputs, verify_settlement,
 };
+pub use cluster::{
+    ClusterError, ClusterProof, accept_tickets, cluster_acc, redraw_peer, verify_cluster,
+    verify_fold_ticket,
+};
+pub use phi::{PhiBinding, PhiClaim, PhiGraph, compute_phi_star, verify_phi_claim};
+pub use proof::{Proof, ProofError, PublicProof};
 pub use live::{LiveError, LiveNode, LiveSignal, NodeMode};
-pub use marginal_cert::{
-    certify_batch, certify_ticket, prove_replayed_batch, replay_marginals, verify_certified_ticket,
-    CertError, CertifiedTicket,
-};
 pub use gossip::{
     decode_self_acc, encode_self_acc, SettleMesh, SettleMsg,
 };
@@ -92,22 +95,24 @@ pub use frames::{
     CyberFrame, RENDER_BIN, decode_events, decode_signal_frame, decode_signals,
     encode_intent_frame, encode_signal_frame,
 };
-pub use phi::{PhiBinding, PhiClaim, PhiGraph, compute_phi_star, verify_phi_claim};
-pub use pay_proof::{PayProofError, PayStatement, nullifier_set_hash, prove_pay, verify_pay};
+pub use pay_proof::{
+    MAX_PAY_AMOUNT, PayProofError, PayStatement, nullifier_set_hash, prove_pay, verify_pay,
+};
 pub use rewards::{
     claim_from_links, mint_receipt_to_ledger, settle_epoch, settle_epoch_tickets,
     settle_with_peer_accs, share_of, valence_to_prediction, verify_receipt, RewardClaim,
     RewardError, SettleReceipt, SettledShare, TicketPolicy, DEFAULT_EMISSION_SCALE,
 };
+pub use settle_tickets::{ClaimSet, TicketSettlement, settle_cluster_tickets, ticket_receipt};
 pub use ticket_proof::{
-    prove_fold_tree, prove_settlement_batch, verify_fold_seal, FoldSeal, ProofError, TicketProver,
+    ProvenTicket, TicketError, TicketInputs, TicketRelation, prove_ticket, verify_ticket,
 };
 pub use tickets::{
     absorb_ticket, assemble_fold_tree, commit_marginals, easy_target, fold_acc, grind_fold,
     grind_settlement, self_fold, try_settlement_ticket, verify_settlement_ticket, ClusterAcc,
     FoldTicket, SettlementTicket, DEFAULT_SETTLE_TARGET,
 };
-pub use tip::{Tip, TipError, TipProver, TipTrust, demo_fold_accumulator, join_with_demo_fold};
+pub use tip::{Tip, TipChain, TipError, TipProver, TipStep, TipTrust, join_with_demo_chain};
 pub use vdf::{VdfProof, challenge_from_hash, evaluate as vdf_evaluate, verify as vdf_verify};
 
 pub use conflict::{ConflictGroup, ConflictIndex, ConflictKey, conflict_keys};
