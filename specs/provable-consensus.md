@@ -9,7 +9,7 @@ date: 2026-03-23
 
 ## the claim
 
-[[foculus]] consensus -- the fixed point of the [[tri-kernel]] composite operator over the [[cybergraph]] -- can be proven correct inside a [[zheng]] circuit. a single proof (~50 us to verify) replaces all voting rounds, all message passing, all quorum checks. consensus becomes computation.
+[[foculus]] consensus -- the fixed point of the [[tri-kernel]] composite operator over the [[cybergraph]] -- can be proven correct inside a [[zheng]] circuit. a single proof (verify goal ≤ 1 ms, size goal ≤ 64 KB — the targets of the [[proof-system-repair|proof system repair]]) replaces all voting rounds, all message passing, all quorum checks. consensus becomes computation.
 
 the [[tri-kernel]] is three operators:
 
@@ -67,7 +67,7 @@ total constraints for $\phi^*$ computation: 23 x 47.8M = 1.1B
 
 ### zheng capacity
 
-[[zheng]] (SuperSpartan + Brakedown) handles up to 2^32 = 4.3 billion constraints. 1.1B / 4.3B = 25.6% of capacity. the full tri-kernel uses a quarter of what zheng can prove.
+[[zheng]] (Spartan over CCS, one lens PCS opening) is designed for up to 2^32 = 4.3 billion constraints. 1.1B / 4.3B = 25.6% of capacity. the full tri-kernel uses a quarter of what zheng can prove.
 
 remaining capacity (74.4%): graph reads (algebraic NMT openings), finalization checks (tau threshold), nullifier verification, state transition application.
 
@@ -186,9 +186,11 @@ with GPU acceleration (SuperSpartan's SpMV is embarrassingly parallel): ~2-3 min
 
 ## verification times
 
-verifier time: O(log N) = O(log 1.42B) = 31 Hemera hashes + field ops = 50 us.
+verifier time: one succinct zheng verification — a Spartan sumcheck transcript plus one WHIR opening, whose hemera Merkle paths grow with log N. goal ≤ 1 ms independent of N; measured today 7.96 ms for the small hash.tri fixture and 270 ms for a 2^20 relation (zheng `audit/succinct-profile-2026-10.md`), so the goal is not yet met. a φ* relation of 1.42B constraints has no measurement: TODO(F-numbers).
 
-one number: 50 us to verify that the complete tri-kernel (diffusion + springs + heat) over 2.9 million particles converged to the correct phi*. on a phone. without downloading the graph.
+today foculus checks φ* by native recomputation (`epoch_cert::verify_phi_on_cert`); no succinct φ* proof exists until the tri-kernel is an accumulated step relation (phase 3).
+
+the target: one verification, goal ≤ 1 ms, to check that the complete tri-kernel (diffusion + springs + heat) over 2.9 million particles converged to the correct phi*. on a phone. without downloading the graph.
 
 ## what it replaces vs what remains
 
@@ -201,7 +203,7 @@ one number: 50 us to verify that the complete tri-kernel (diffusion + springs + 
 | message passing | O(N) per round, multiple rounds | not needed -- proof replaces agreement |
 | finality gadget | Casper/Grandpa/etc. | not needed -- pi_i > tau is finality |
 | sync committee | rotating subset vouches for chain tip | not needed -- proof is self-verifying |
-| light client trust | trust sync committee / SPV | trust math -- verify proof in 50 us |
+| light client trust | trust sync committee / SPV | trust math -- verify one proof (goal ≤ 1 ms) |
 | fork choice | longest chain / heaviest subtree / LMD-GHOST | pi* -- the unique fixed point |
 | slashing | detect and punish after the fact | prevention -- invalid pi* cannot produce valid proof |
 
@@ -217,15 +219,16 @@ one number: 50 us to verify that the complete tri-kernel (diffusion + springs + 
 
 ## recursive structure
 
-provable consensus composes recursively with zheng's folding:
+provable consensus composes across epochs by zheng's accumulation (ARC-style hash-based accumulation, phase 3 of the [[proof-system-repair|proof system repair]]) — not by proving proofs:
 
 ```
-epoch 1: prove φ*₁ from graph state G₁
-epoch 2: prove φ*₂ from graph state G₂
-         FOLD: prove (proof₁ valid ∧ G₂ = G₁ + new_signals ∧ φ*₂ correct)
-epoch N: ONE accumulated proof covers ALL history
+epoch 1: accumulate the step claims of φ*₁ over graph state G₁
+epoch 2: accumulate the claims of (G₂ = G₁ + new_signals ∧ φ*₂ correct)
+         into the same accumulator: one root + a fixed number of claims
+epoch N: ONE decider — one WHIR opening of the final accumulator — covers ALL history
 
-verification: 50 μs regardless of how many epochs
+decider proof: goal ≤ 64 KB, verify goal ≤ 1 ms, constant in the number of epochs;
+measured TODO(F-numbers)
 ```
 
 a light client joining at epoch 1,000,000 verifies ONE proof. that proof attests:
@@ -234,7 +237,7 @@ a light client joining at epoch 1,000,000 verifies ONE proof. that proof attests
 - all finality decisions followed from the correct pi*
 - the current state is the result of correctly applying all transitions
 
-this is mathematical certainty compressed to 50 us.
+this is mathematical certainty compressed to one decider proof.
 
 ## dependency chain
 
@@ -243,7 +246,7 @@ nebu  (Goldilocks field arithmetic)
   ↓
 hemera  (Poseidon2 hash — for signal identity, NOT for state reads)
   ↓
-zheng  (SuperSpartan + Brakedown — proves φ* computation)
+zheng  (Spartan over CCS + one lens PCS opening, accumulation — proves φ* computation)
   ↓
 nox  (18 patterns: 16 compute + call + look — SpMV as execution trace)
   ↓
@@ -263,8 +266,8 @@ algebraic NMT is the prerequisite. without it, consensus must be voted. with it,
 | current ([[bostrom]]) | CometBFT (Tendermint fork) | voted, 2/3 quorum, leader-based |
 | phase 1 | [[foculus]] on NMT state | computed locally, gossip-verified |
 | phase 2 | foculus on algebraic NMT | computed locally, proof-verified per epoch |
-| phase 3 | provable consensus | proven once, verified by anyone in 50 us |
-| phase 4 | recursive provable consensus | accumulated proof covers all history |
+| phase 3 | provable consensus | proven once, verified by anyone (goal ≤ 1 ms) |
+| phase 4 | accumulated provable consensus | one decider over the accumulator covers all history |
 
 phase 2 is the critical transition. algebraic NMT makes graph reads algebraic. once reads are algebraic, pi* computation fits in a zheng circuit. once it fits in a circuit, it can be proven. once it can be proven, voting becomes unnecessary.
 
@@ -274,6 +277,6 @@ consensus has been a PROTOCOL problem since Lamport (1982). nodes communicate to
 
 provable consensus reclassifies it as a COMPUTATION problem. pi* is a function of the graph. the function is deterministic. the computation is provable. the proof is verifiable. no communication between validators is needed for agreement -- only for data propagation.
 
-this is a category shift. the question changes from "how do nodes agree?" to "can a node prove it computed correctly?" the answer -- enabled by algebraic state commitments and recursive proofs -- is yes. 624 million constraints. 50 microseconds to verify. consensus without consensus.
+this is a category shift. the question changes from "how do nodes agree?" to "can a node prove it computed correctly?" the answer -- enabled by algebraic state commitments and accumulation -- is yes. 624 million constraints. one proof to verify. consensus without consensus.
 
 see [[foculus]] for the consensus specification. see [[algebraic state commitments]] for the enabling primitive. see [[vec]] for the formal consistency model. see [[structural sync]] for the five-layer framework. see [[collective focus theorem]] for the convergence proof. see [[spectral gap from convergence]] for the empirical observation that bostrom converges in 23 iterations

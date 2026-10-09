@@ -7,7 +7,7 @@
 //!
 //! zheng's `verify_phi_star` re-runs the tri-kernel natively — that final
 //! equality is what makes it sound — but it also verifies one legacy
-//! HyperNova SpMV proof per iteration and never checks the claimed graph
+//! fold SpMV proof per iteration and never checks the claimed graph
 //! commitment against the graphs it is handed (launch row 40). A public v3
 //! certificate of the SpMV rows would disclose the intermediate vectors and
 //! check the same products the recomputation does, at more bytes. So a

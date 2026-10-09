@@ -16,7 +16,7 @@ you will never be asked to vote on anything, and nobody will vote on your signal
 
 ## the fact spreads
 
-from t = 0 to roughly 3.2 seconds, the signal propagates by [[gossip]], fanout $\geq 2$, $O(\Delta\log|D|)$ hops across your [[particle]]'s $\varepsilon$-support domain. every neuron that receives it does one cheap thing: verifies $\sigma$ (tens of microseconds) and your chain position (one comparison). an invalid signal cannot exist past this point -- not "gets voted down," *cannot be constructed*, the constraint system forbids it. what propagates is already true. the only open question is how much it matters
+from t = 0 to roughly 3.2 seconds, the signal propagates by [[gossip]], fanout $\geq 2$, $O(\Delta\log|D|)$ hops across your [[particle]]'s $\varepsilon$-support domain. every neuron that receives it does one cheap thing: verifies $\sigma$ (a fraction of a millisecond for a pay proof today; goal ≤ 1 ms for any succinct $\sigma$) and your chain position (one comparison). an invalid signal cannot exist past this point -- not "gets voted down," *cannot be constructed*, the constraint system forbids it. what propagates is already true. the only open question is how much it matters
 
 ## meanwhile, every node is already converging
 
@@ -71,11 +71,11 @@ beacon (30-40s) is where the claim set freezes and an outer [[VDF]] runs over it
 
 settle (40-70s) is the elegant part. every miner grinds: pick a nonce, hash it against the beacon and the cluster to get a coalition ordering, compute the marginal sample under that ordering (an incremental [[tri-kernel]] pass on a poly-log domain, single-digit milliseconds on the network's field-processor hardware), then check the win-test. only winners publish -- a losing sample costs milliseconds and produces nothing, so the expensive part, proof generation, is paid only on tickets that actually win. this changes what "difficulty" means: it is not tuned to a block-time target the way proof-of-work usually is, it is tuned so that the *expected number of published tickets per cluster* lands near the [[Hoeffding's inequality|Hoeffding]] precision target $k_{\min}$. run one example: 1% precision at $\delta=10^{-6}$ confidence gives $k_{\min}=\lceil\ln(2\times10^6)/(2\times10^{-4})\rceil\approx72{,}500$ samples per cluster. that sounds heavy and is not -- at a millisecond a sample, it is about 72 swarm-seconds of compute, spread across every miner working the cluster in a thirty-second window, and clusters settle in parallel because they are independent by construction. one number, the difficulty target, sets subsidy emission and attribution precision simultaneously. security spend is, literally, statistical accuracy
 
-self-fold runs the whole time settle does, starting the moment a miner holds two winning tickets: fold them (about thirty field operations and one [[Hemera]] hash), keep a running self-accumulator, repeat. by the time the settle window closes, each miner has one pre-proven batch to broadcast, not a flood of individual tickets -- this is what keeps the next window short
+self-fold runs the whole time settle does, starting the moment a miner holds two winning tickets: fold them (one accumulation step: a sumcheck over both claim sets, one [[Hemera]] Merkle commitment, a few query openings — hash-based accumulation, phase 3 of the [[proof-system-repair|proof system repair]]; step cost TODO(F-numbers)), keep a running self-accumulator, repeat. by the time the settle window closes, each miner has one pre-proven batch to broadcast, not a flood of individual tickets -- this is what keeps the next window short
 
 fold (70-80s) assembles the miners' self-accumulators into one root. tree depth is $O(\log k_{\text{miners}})$ -- about ten levels for a thousand miners -- each fold step is its own cheap Poisson-tested ticket, and the accumulator's commutativity means any assembly order works, so there is no coordination round: miners just pair whatever is available at their level. ten seconds is generous; in practice the root often exists before the window closes, because self-folding overlapped settle the whole time. and the deadline behavior is specified for the cases where it does not: too few samples arrived ($k<k_{\min}$) mints the pulse on the settled fraction and defers the remainder to the annuity, chain never stalls; enough samples arrived but the tree did not finish assembling uses the deepest available sub-accumulator, still a valid Hoeffding sub-sample
 
-tok (80-85s) is one $O(1)$ decider verification -- roughly fifty microseconds checking the entire swarm's work, less time than a syscall -- a conservation clip against the smaller of the claimed and the realized value, and the mint executes. your [[Shapley value|Shapley]] share exists now. it is escrowed until depth $d$
+tok (80-85s) is one decider verification -- one opening of the final accumulator checking the entire swarm's work, goal ≤ 1 ms (measured TODO(F-numbers); until accumulation lands tok checks every ticket proof, 354 ms for 512 three-contributor tickets) -- a conservation clip against the smaller of the claimed and the realized value, and the mint executes. your [[Shapley value|Shapley]] share exists now. it is escrowed until depth $d$
 
 ## who actually computes the beacon
 
@@ -94,8 +94,8 @@ the eighty-five-second walkthrough above is deliberately conservative -- margin 
 | propose | 30s | 8-10s | only needs finality ($\approx$4s) plus the depth-$d$ stability margin; 30s was margin on margin |
 | beacon | 10s | 2-3s | needs only to exceed network jitter ($\approx$0.4s) by a comfortable factor; 10s assumed a sloppier adversary model than the construction needs |
 | settle | 30s | 10s | $k_{\min}\approx72{,}500$ is fixed by the precision target, not by wall time -- more miners means the same precision arrives faster, so this window shrinks with adoption, not with tuning |
-| fold | 10s | 2-3s | self-fold already overlaps settle; the tree is about ten levels of millisecond-class steps; the construction itself expects a root before the deadline, not at it |
-| tok | 5s | $\approx$1s | one fifty-microsecond verify and a state write |
+| fold | 10s | 2-3s | self-fold already overlaps settle; the tree is about ten levels of accumulation steps (step time TODO(F-numbers)); the construction itself expects a root before the deadline, not at it |
+| tok | 5s | $\approx$1s | one decider verify (goal ≤ 1 ms) and a state write |
 | epoch total | 85s | $\approx$25s | |
 | spendable at depth $d=2$ | $\approx$3min | $\approx$50s | |
 

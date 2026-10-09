@@ -10,7 +10,7 @@ alias: fold mining, fold lottery, second lottery, settlement aggregation, fold a
 
 settlement mining ([[reward specification]] §7) produces a swarm of winning tickets. each ticket is a [[zheng]] proof that one Shapley marginal $m(n)$ was correctly evaluated under a [[foculus beacon|beacon]]-seeded ordering. the swarm average converges to the fair division by [[Hoeffding's inequality|Hoeffding]]. but before [[tok]] can mint, those tickets must aggregate into one $O(1)$ object — or a flood of minimum-cost tickets makes settlement verification an asymmetric-cost DoS.
 
-fold mining is the second lottery that does this aggregation. every fold step is real proof-of-useful-work: it collapses two [[zheng]] proof instances into one accumulator using [[recursion|HyperNova IVC]]. like settlement mining fuses securing the chain with computing fair division, fold mining fuses accumulation with the stakeless onramp — same [[Goldilocks field processor|GFP]] primitives, same ticket structure, same progress-free lottery, same karma- and stake-blind entry. it is the natural completion of the first lottery, not a separate protocol.
+fold mining is the second lottery that does this aggregation. every fold step is real proof-of-useful-work: it merges two accumulators into one by hash-based accumulation (ARC-style, landing with phase 3 of the [[proof-system-repair|proof system repair]]). like settlement mining fuses securing the chain with computing fair division, fold mining fuses accumulation with the stakeless onramp — same [[Goldilocks field processor|GFP]] primitives, same ticket structure, same progress-free lottery, same karma- and stake-blind entry. it is the natural completion of the first lottery, not a separate protocol.
 
 ## the settlement estimator — the tru boundary
 
@@ -31,24 +31,28 @@ each winning `(n, m(n), σ)` is a ticket; the swarm mean of `m(n)` converges by 
 
 ## the fold step
 
-the primitive is [[accumulator|HyperNova IVC folding]]:
+the primitive is hash-based accumulation of Reed–Solomon evaluation claims, ARC-style ([ARC 2024/1731](https://eprint.iacr.org/2024/1731); WARP [2025/753](https://eprint.iacr.org/2025/753) as the linear-time fallback), specified in [[zheng]] `specs/accumulation.md` (landing with phase 3):
 
-$$\text{fold}(\text{acc},\, \text{instance}) \;\to\; \text{acc}' \quad \approx 30\ \mathbb{F}_p\ \text{ops}\ +\ 1\ \text{Hemera hash.}$$
+$$\text{fold}(\text{acc}_L,\, \text{acc}_R) \;\to\; \text{acc}'$$
 
-the accumulated relation for a cluster is the triple $\bigl(\sum_n m(n),\, k,\, \pi_{\text{acc}}\bigr)$ — running sum of accepted marginals, sample count, validity accumulator. this is a commutative monoid under fold: the order of accumulation does not affect the result, so the tree assembles in any topology without coordination, preserving the leaderless property. once assembled, the root decider costs $\sim 825$ constraints ($\sim 10$–$50\ \mu$s verify). one constant-size object proves every marginal sample in the cluster.
+one fold step batches the claims of both inputs with a [[sumcheck]], commits one combined word under a [[hemera]] Merkle root, samples out-of-domain points and opens a few query positions. the accumulator is one root plus a fixed number of claims, independent of how many steps produced it. no proof is verified inside a step and no verifier circuit is built: this is accumulation, not recursion.
+
+the accumulated relation for a cluster is the triple $\bigl(\sum_n m(n),\, k,\, \pi_{\text{acc}}\bigr)$ — running sum of accepted marginals, sample count, validity accumulator. this is a commutative monoid under fold: the order of accumulation does not affect the result, so the tree assembles in any topology without coordination, preserving the leaderless property. the miner's self-fold and every node of the cluster tree are accumulation steps; the root is decided once, by one decider — one WHIR opening of the final accumulator. one object proves every marginal sample in the cluster. target: decider proof ≤ 64 KB, verify ≤ 1 ms (the goal of the repair); measured size and time TODO(F-numbers).
+
+the fold step does not exist yet as an accumulation step: tickets are verified individually today (next section). whether $\sigma_f$ — the validity proof of one fold step — is itself an accumulation step or stays a separate per-step proof is open (§8 of the repair proposal, decided in phase 3 with foculus).
 
 duplicate nonces are excluded structurally: the settlement win-test commits to $\bigl(\mathrm{id}(\nu),\, n\bigr)$ jointly, so no two tickets share a nonce under different identities. a re-submission of an existing nonce is a collision on the committed value, detected at fold time and discarded. the monoid counts each canonical $(\mathrm{id},\, n)$ pair once.
 
 ## proof profile today
 
-the constant-size decider above is the phase-3 target of the [[proof-system-repair|proof system repair]]; the HyperNova fold it named was never checked by its verifier and is gone from foculus. until hash-based accumulation lands, the contract is linear:
+the single decider above is the phase-3 target of the [[proof-system-repair|proof system repair]]; the legacy fold seal foculus used before was never checked by its verifier and is gone from foculus. until hash-based accumulation lands, the contract is linear:
 
 - a ticket carries one proof of its marginals (`ticket_proof`). the relation the verifier builds from $(b_E, n)$ and the contributor count is $m_{\pi_j} = v_j - v_{j-1}$; the coalition values $v_j$ are the witness, disclosed under zheng's public certificate v3 and checked natively against `impulse` because no CCS for the tri-kernel impulse exists yet. ordering, commitment, identity and win test are recomputed from public data.
 - a cluster is accepted iff every ticket proof verifies and no $(\mathrm{id}, n)$ repeats; the monoid triple is rebuilt from the accepted set (`cluster::verify_cluster`). a gossiped self-accumulator is a list of $(\mathrm{id}, n)$ whose tickets the settler redraws and proves; a peer whose sums differ is dropped.
 - a fold step is checked by recomputing $\text{fold}(\text{acc}_L, \text{acc}_R)$, pair-id and score; $\sigma_f$ is that recomputation until §8 of the repair proposal decides it.
 - [[tok]] mints only after the full receipt check (`settle_tickets::verify_settlement`): every ticket proof, the shares, the receipt hash.
 
-verify cost is one impulse per contributor per ticket; measured sizes and times are in `audit/sound-settlement-proofs-2026-10.md`.
+verify cost is one impulse per contributor per ticket and linear in tickets: measured 2026-10-09 (Apple M4 Max), a cluster of 512 tickets with 3 contributors each verifies in 354 ms (0.69 ms per ticket, 31,232 proof bytes); with 8 contributors over 128 base links, 14.4 s (28 ms per ticket). all sizes and times are in `audit/sound-settlement-proofs-2026-10.md` §5.
 
 ## self-fold first
 
@@ -147,4 +151,4 @@ the fork-safety requirement from §15 — "settlement must bind to a $d$-deep st
 
 ---
 
-see [[foculus beacon]] for the epoch randomness beacon $b_E$ the fold lottery consumes. see [[accumulator]] and [[recursion]] for the HyperNova fold primitive and cost numbers. see [[reward specification]] §7–§8 for settlement mining mechanics and the economics that the fold lottery extends. see [[foculus]] for epoch finality and the full seven-step protocol. see [[tok]] for conservation clip and mint execution.
+see [[foculus beacon]] for the epoch randomness beacon $b_E$ the fold lottery consumes. see [[proof-system-repair|proof system repair]] §3–§4 for accumulation versus recursion and the size and verify goals; [[zheng]] `specs/accumulation.md` for the accumulation step (phase 3). see [[reward specification]] §7–§8 for settlement mining mechanics and the economics that the fold lottery extends. see [[foculus]] for epoch finality and the full seven-step protocol. see [[tok]] for conservation clip and mint execution.

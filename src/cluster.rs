@@ -5,7 +5,7 @@
 // ---
 //! Cluster settlement: verify every ticket, then sum.
 //!
-//! Replaces the HyperNova fold seal, which the verifier never checked.
+//! Replaces the legacy fold seal, which the verifier never checked.
 //! The cluster object keeps the commutative-monoid shape of
 //! specs/fold-mining.md — `(Σ m, k, commitment of the accepted set)` in
 //! [`ClusterAcc`] — so accumulation can replace the linear check later
