@@ -96,7 +96,8 @@ pub use frames::{
     encode_intent_frame, encode_signal_frame,
 };
 pub use pay_proof::{
-    MAX_PAY_AMOUNT, PayProofError, PayStatement, nullifier_set_hash, prove_pay, verify_pay,
+    MAX_PAY_AMOUNT, PayProofError, PayStatement, check_pay, check_signal_proof, nullifier_set_hash,
+    prove_pay, verify_pay,
 };
 pub use rewards::{
     claim_from_links, mint_receipt_to_ledger, settle_epoch, settle_epoch_tickets,

@@ -58,6 +58,18 @@ pub enum PayProofError {
     Proof(proof::ProofError),
 }
 
+impl std::fmt::Display for PayProofError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Empty => f.write_str("pay proof over a signal without links"),
+            Self::Overflow => f.write_str("pay leg or total above the pay proof range"),
+            Self::Proof(e) => write!(f, "pay proof rejected: {e:?}"),
+        }
+    }
+}
+
+impl std::error::Error for PayProofError {}
+
 impl PayStatement {
     /// The statement of a pay signal: its content id, leg count and total.
     pub fn of(signal: &Signal) -> Result<Self, PayProofError> {
@@ -166,10 +178,23 @@ pub fn prove_pay(signal: &Signal) -> Result<Proof, PayProofError> {
 
 /// Verify a pay proof against the signal it pays for.
 pub fn verify_pay(proof: &Proof, signal: &Signal) -> bool {
-    let Ok(statement) = PayStatement::of(signal) else {
-        return false;
-    };
-    proof::verify(&PayRelation { signal, statement }, proof).is_ok()
+    check_pay(proof, signal).is_ok()
+}
+
+/// [`verify_pay`] with the reason a proof is rejected.
+pub fn check_pay(proof: &Proof, signal: &Signal) -> Result<(), PayProofError> {
+    let statement = PayStatement::of(signal)?;
+    proof::verify(&PayRelation { signal, statement }, proof).map_err(PayProofError::Proof)
+}
+
+/// Admission check of a signal's proof field. A signal without a proof
+/// passes; a signal with one must carry a valid pay proof of itself — the
+/// only statement a signal proof makes today.
+pub fn check_signal_proof(signal: &Signal) -> Result<(), PayProofError> {
+    match &signal.proof {
+        None => Ok(()),
+        Some(proof) => check_pay(proof, signal),
+    }
 }
 
 /// Hash nullifiers for finality / content binding.

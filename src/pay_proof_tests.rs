@@ -95,3 +95,26 @@ fn oversized_and_empty_pays_are_refused() {
     assert!(!verify_pay(&honest, &big));
     assert!(prove_pay(&signal(&[MAX_PAY_AMOUNT])).is_ok());
 }
+
+#[test]
+fn signal_proof_check_names_the_reason() {
+    let mut s = signal(&[5, 6]);
+    assert_eq!(check_signal_proof(&s), Ok(()), "no proof passes");
+    s.proof = Some(prove_pay(&s).unwrap());
+    assert_eq!(check_signal_proof(&s), Ok(()));
+    let proof = s.proof.clone().unwrap();
+    s.links[1].amount = 7;
+    assert_eq!(
+        check_signal_proof(&s),
+        Err(PayProofError::Proof(proof::ProofError::WrongStatement))
+    );
+    let Proof::Public(mut body) = proof;
+    s.links[1].amount = 6;
+    body.certificate.free[0] ^= 1;
+    s.proof = Some(Proof::Public(body));
+    assert!(matches!(check_signal_proof(&s), Err(PayProofError::Proof(_))));
+    let mut empty = signal(&[]);
+    empty.proof = s.proof.clone();
+    assert_eq!(check_signal_proof(&empty), Err(PayProofError::Empty));
+    assert!(PayProofError::Empty.to_string().contains("without links"));
+}
