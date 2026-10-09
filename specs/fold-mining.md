@@ -39,6 +39,17 @@ the accumulated relation for a cluster is the triple $\bigl(\sum_n m(n),\, k,\, 
 
 duplicate nonces are excluded structurally: the settlement win-test commits to $\bigl(\mathrm{id}(\nu),\, n\bigr)$ jointly, so no two tickets share a nonce under different identities. a re-submission of an existing nonce is a collision on the committed value, detected at fold time and discarded. the monoid counts each canonical $(\mathrm{id},\, n)$ pair once.
 
+## proof profile today
+
+the constant-size decider above is the phase-3 target of the [[proof-system-repair|proof system repair]]; the HyperNova fold it named was never checked by its verifier and is gone from foculus. until hash-based accumulation lands, the contract is linear:
+
+- a ticket carries one proof of its marginals (`ticket_proof`). the relation the verifier builds from $(b_E, n)$ and the contributor count is $m_{\pi_j} = v_j - v_{j-1}$; the coalition values $v_j$ are the witness, disclosed under zheng's public certificate v3 and checked natively against `impulse` because no CCS for the tri-kernel impulse exists yet. ordering, commitment, identity and win test are recomputed from public data.
+- a cluster is accepted iff every ticket proof verifies and no $(\mathrm{id}, n)$ repeats; the monoid triple is rebuilt from the accepted set (`cluster::verify_cluster`). a gossiped self-accumulator is a list of $(\mathrm{id}, n)$ whose tickets the settler redraws and proves; a peer whose sums differ is dropped.
+- a fold step is checked by recomputing $\text{fold}(\text{acc}_L, \text{acc}_R)$, pair-id and score; $\sigma_f$ is that recomputation until §8 of the repair proposal decides it.
+- [[tok]] mints only after the full receipt check (`settle_tickets::verify_settlement`): every ticket proof, the shares, the receipt hash.
+
+verify cost is one impulse per contributor per ticket; measured sizes and times are in `audit/sound-settlement-proofs-2026-10.md`.
+
 ## self-fold first
 
 before broadcasting, each settlement miner folds its own batch of winning tickets into a single self-accumulator. the cluster fold tree then reaches depth $O(\log k_{\text{miners}})$ rather than $O(\log k_{\text{tickets}})$; each tree node is one miner's pre-aggregated batch, already proven. self-folding can begin as soon as a miner's first winning ticket arrives — it runs concurrently with the settle window and need not wait for it to close.
