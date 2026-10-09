@@ -49,7 +49,7 @@ direction matters: $\mathrm{root}_S$ commits to *at least* the support. a claim 
 
 ## component 2 — stake attestation fold
 
-every node, in ordinary [[gossip]], piggybacks attestations: a signature over $(i, \mathrm{root}_S, E)$ for each certified finality it has observed and agrees it saw. attestations are aggregated with the same HyperNova fold accumulator [[reward specification]] §7 uses for settlement tickets; the fold certifies that the attesting set's stake, opened against [[bbg]] `neurons.root`, exceeds $\theta$ times the domain's total stake.
+every node, in ordinary [[gossip]], piggybacks attestations: a signature over $(i, \mathrm{root}_S, E)$ for each certified finality it has observed and agrees it saw. attestations are aggregated by the same hash-based accumulation (ARC-style, phase 3 of the [[proof-system-repair|proof system repair]]) that [[fold-mining]] uses for settlement tickets; one decider over the accumulator certifies that the attesting set's stake, opened against [[bbg]] `neurons.root`, exceeds $\theta$ times the domain's total stake.
 
 two properties keep this from being a committee in disguise:
 
@@ -76,7 +76,7 @@ the window is latency-native: $T$ scales with the medium, so the mechanism costs
 
 ## what it buys
 
-**planetary.** light clients and full nodes alike verify one O(1) accumulator instead of trusting a claim. conflicting finalities become slashable events with evidence attached, converting an undetectable safety violation into a bounded economic one.
+**planetary.** light clients and full nodes alike verify one decider proof over the attestation accumulator (goal ≤ 64 KB, ≤ 1 ms; measured TODO(F-numbers)) instead of trusting a claim. conflicting finalities become slashable events with evidence attached, converting an undetectable safety violation into a bounded economic one.
 
 **interplanetary.** the certificate is a small aggregate and travels store-and-forward with everything else. an arriving state carries its grade with it: a receiving planet accepts certified finality, rejects uncertified, and can distinguish them without trusting the sender. adversarial-finalized-but-uncertified state from behind a conjunction cannot be sold across it. partition stops being a blind spot and becomes a well-defined grade: *observed, uncertified, non-importable.*
 
@@ -86,7 +86,7 @@ the window is latency-native: $T$ scales with the medium, so the mechanism costs
 |---|---|---|
 | $\mathrm{root}_S$, support proofs | [[bbg]] `signals.root`, NMT namespaces, `neurons.root` | root in the cert; namespace sync on join |
 | $\sigma_{\Delta\phi}$, challenge proofs | [[reward specification]] §2 impulse; [[zheng]] | one local proof per claim and per challenge |
-| $\pi_{\mathrm{att}}$ | HyperNova fold ([[reward specification]] §7) | attestation accumulator, $\theta$ threshold |
+| $\pi_{\mathrm{att}}$ | hash-based accumulation, as in [[fold-mining]] (zheng phase 3) | attestation accumulator, $\theta$ threshold; the step relation (signature check + stake opening against `neurons.root`) is not yet specified |
 | $w_E$, $\tau_E$ | [[foculus beacon]] | window per claim; epoch-fixed threshold |
 | attestation transport | [[radio]] gossip | piggyback signature |
 | value of uncertified state | [[tok]], [[cyb/parts/ward\|ward]] | acceptance policy: certified required above a value class |

@@ -110,7 +110,7 @@ every signal carries a [[zheng]] proof sigma covering all operations in the batc
 
 $$\text{verify\_signal}(s, \sigma) \to \{\text{valid}, \text{invalid}\}$$
 
-algorithm: SuperSpartan IOP + Brakedown PCS over [[Goldilocks field]]:
+algorithm: Spartan sumcheck over CCS with [[fp3]] challenges + one lens PCS opening (WHIR, the phase-2 winner) over [[Goldilocks field]]; see zheng `specs/execution.md`:
 
 ```
 verify_signal(signal, proof):
@@ -119,12 +119,13 @@ verify_signal(signal, proof):
      gᵢ ← proof.round_polynomials[i]
      assert gᵢ(0) + gᵢ(1) = previous_claim
      T.absorb(gᵢ)
-     rᵢ ← T.squeeze()  # Fiat-Shamir via Hemera
+     rᵢ ← T.squeeze()  # Fiat-Shamir via Hemera, rᵢ in Fp3
   3. assert final_claim = constraint_eval(proof.value, r, statement)
-  4. assert Brakedown_verify(commitment, r, proof.value, proof.opening)
+  4. assert pcs_verify(commitment, r, proof.value, proof.opening)
+     # WHIR: hemera Merkle paths at the query positions + folding checks
 ```
 
-cost: O(log N) Hemera hashes + field ops. ~50 us independent of computation size (recursive proof compresses all history). an invalid signal cannot be constructed -- the constraint system (18 patterns of [[nox]]: 16 compute + call + look) prevents it.
+cost: the Merkle paths and folding checks of one opening — hemera hashes that grow with log N — plus field ops. goal ≤ 1 ms; measured today 7.96 ms for the hash.tri fixture (zheng `audit/succinct-profile-2026-10.md`), so the goal is not yet met. constant in computation length once accumulation lands (phase 3 of the [[proof-system-repair|proof system repair]]); until then a signal's σ is a public certificate v3, checked row by row. an invalid signal cannot be constructed -- the constraint system (18 patterns of [[nox]]: 16 compute + call + look) prevents it.
 
 ## P6: ordering (immutable causal structure)
 
@@ -150,7 +151,7 @@ properties:
 | P2 completeness | [[NMT]] proof | namespace range proof | O(log n) | structural (unconditional) |
 | P3 availability | [[DAS]] + [[erasure coding]] | 2D Reed-Solomon + sampling | O(sqrt(n)) | probabilistic (information-theoretic) |
 | P4 liveness | gossip + erasure | k-of-n reconstruction | network-dependent | eventual (gossip propagation) |
-| P5 validity | [[zheng]] proof | SuperSpartan + Brakedown | O(log N) verify | computational (collision resistance) |
+| P5 validity | [[zheng]] proof | Spartan + one lens PCS opening (WHIR) | O(log N) verify | computational (collision resistance) |
 | P6 ordering | [[hash chain]] + [[VDF]] | SHA/Hemera chain + sequential VDF | O(1) verify | physical (sequential time) |
 
 each property has a different guarantee type. each comes from a different branch of mathematics. each is independently verifiable. this is compositional security -- failure of one layer does not compromise others.
@@ -199,7 +200,7 @@ application (cybergraph operations)
      ↓ expressed as
 nox (18 patterns: 16 compute + call + look, focus-metered execution)
      ↓ proven by
-zheng (SuperSpartan IOP + Brakedown PCS)
+zheng (Spartan IOP + lens PCS: WHIR)
      ↓ committed via
 hemera (Poseidon2 hashing, NMT/MMR construction)
      ↓ over
@@ -209,7 +210,7 @@ nebu (Goldilocks field arithmetic, p = 2⁶⁴ - 2³² + 1)
 each layer provides guarantees consumed by the layer above:
 - nebu: field operations are correct (algebraic closure)
 - hemera: hashes are collision-resistant (2^128 security, margin 2^918)
-- zheng: proofs are sound (sumcheck + Brakedown, error <= 2^-512 at k=16)
+- zheng: proofs are sound (sumcheck + one Reed–Solomon PCS opening); bits per component, proven or conjectured, in zheng `specs/soundness.md`
 - nox: execution is focus-metered (halt guaranteed)
 - application: state transitions are valid
 
@@ -234,8 +235,8 @@ cross-graph cyberlinks (A links to B) require: NMT inclusion proof in both names
 | P1 (merge) | [[G-Set]] union | algebraic accumulator | O(1) membership instead of O(n) scan |
 | P2 (completeness) | NMT (23.5K constraints/path) | algebraic NMT (PCS evaluation) | 33x constraint reduction |
 | P3 (availability) | 2D Reed-Solomon | 3D tensor codes | O(cbrt(n)) sampling instead of O(sqrt(n)) |
-| P5 (validity) | zheng proof (~70K constraints/verify) | jets (precompiled verification) | 8.5x constraint reduction |
-| P5 (recursion) | fold per block | batched folding (IVC) | amortized O(1) per signal |
+| P5 (validity) | zheng proof, verified natively | jets for hemera and field ops in the verifier | gain TODO(F-numbers) |
+| P5 (accumulation) | one proof per signal | ARC-style accumulation of signal claims, one decider per checkpoint | amortized O(1) per signal |
 | cross-index | LogUp (~500 constraints/axon) | algebraic NMT (zero) | eliminated |
 
 the complete optimization path: nebu provides fast field ops, hemera uses them for efficient hashing, zheng uses hemera for transparent proofs, nox uses zheng for provable execution, bbg uses everything for authenticated state. top-down: application demands drive optimization targets. bottom-up: field arithmetic improvements cascade through every layer.

@@ -30,7 +30,7 @@ a hidden layer would mean: a message wrapper the application layer doesn't see, 
 
 on receiving a signal a neuron has not seen before (checked by the signal's own content identity -- no separate dedup key needed, since two identical signals are the same object under content addressing):
 
-1. verify $\sigma$ (P5, tens of microseconds) and the `prev`/`step` chain position (P6, $O(1)$)
+1. verify $\sigma$ (P5; today a zheng public certificate v3 — a one-leg pay proof verifies in 0.05 ms, `audit/sound-settlement-proofs-2026-10.md` §5.3; goal ≤ 1 ms for a succinct $\sigma$) and the `prev`/`step` chain position (P6, $O(1)$)
 2. if valid and new: apply it (index nullifiers, update local conflict state per `specs/protocol.md` steps 2-3), then forward it to $f$ peers, $f\geq2$
 3. if already seen, or invalid: drop. an invalid signal cannot be constructed (P5), so "invalid" here is a defensive check against transport corruption, not an expected case
 

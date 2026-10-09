@@ -110,7 +110,10 @@ lifecycle:
   submitted to network: full signal (ordering fields preserved)
   included in block:    network assigns t (block height)
 
-signal size: ~2 KiB proof + impulse + 160 bytes ordering metadata
+signal size: σ + impulse + 160 bytes ordering metadata
+  σ today: a zheng public certificate v3, linear in its witness
+           (a one-leg pay proof is 709 B, audit/sound-settlement-proofs-2026-10.md §5.3)
+  σ succinct: goal ≤ 16 KB for a small statement; measured for the signal relation TODO(F-numbers)
 ```
 
 ## five verification layers
@@ -139,7 +142,9 @@ the proof covers:
   - neuron signature valid
 
 invalid signal → proof verification fails → signal rejected by any peer
-cost: ~5 μs verification (zheng)
+cost: one zheng verification — goal ≤ 1 ms (succinct profile); measured today
+      7.96 ms for the hash.tri fixture (zheng audit/succinct-profile-2026-10.md);
+      for the signal relation TODO(F-numbers)
 owner: cybergraph validates before calling bbg.apply()
 ```
 
@@ -232,8 +237,7 @@ owned by radio / cyb/sync.
   any √n × √n submatrix sufficient for reconstruction
 
 sampling: O(√n) random cells with Lens openings (algebraic DAS)
-  ~1.5 KiB for 20 samples
-  O(1) field verifications per sample
+  each opening carries its hemera Merkle paths; size per sample TODO(F-numbers)
   99.9999% confidence at 20 samples
 ```
 
@@ -279,7 +283,7 @@ two neurons of the same identity reconnect. owned by cybergraph.
    → no withholding possible
 
 4. DAS SAMPLE content chunks                     O(√n)
-   algebraic DAS — Lens openings per sample (~200 bytes each)
+   algebraic DAS — Lens openings per sample (Merkle paths included; size TODO(F-numbers))
    verify content availability
 
 5. VERIFY each received signal:
@@ -324,7 +328,7 @@ client → peer: (axons_out, key=P, state_root=BBG_root)
 peer → client: Lens batch opening + all axon entries for P
 client verifies: Lens.verify(BBG_root, (axons_out, P, t), entries, proof)
 guarantee: "ALL outgoing axons from P. nothing hidden."
-proof size: ~200 bytes
+proof size: one lens opening on the phase-2 PCS (WHIR); measured for bbg queries TODO(F-numbers)
 ```
 
 **incoming axons to particle Q:**
@@ -368,22 +372,27 @@ data transferred: O(|changes since h₁|)
 ```
 new client joins with no history:
 
-1. OBTAIN checkpoint = (BBG_root, folding_acc, height) from any peer
-   ~232 bytes
+1. OBTAIN checkpoint = (BBG_root, decider proof of the accumulator, height)
+   from any peer
+   size: goal ≤ 64 KB, constant in the number of blocks; measured TODO(F-numbers)
 
-2. VERIFY folding_acc:
-   final_proof = decide(folding_acc)        zheng decider
-   verify(final_proof, BBG_root)
+2. VERIFY the decider proof against BBG_root
+   the accumulator is ARC-style hash-based accumulation of every block's
+   step claims (zheng specs/accumulation.md, phase 3 of the proof-system repair);
+   the decider is one WHIR opening of the final accumulator
    → ONE verification proves ALL history from genesis valid
-   → cost: ~5 μs
+   → cost: goal ≤ 1 ms; measured TODO(F-numbers)
+   today (before accumulation): the tip chain is checked step by step,
+   one hemera per step — 13.9 µs per step measured, linear in height
+   (audit/sound-settlement-proofs-2026-10.md §5.4)
 
 3. SYNC namespaces of interest
 
 4. MAINTAIN:
-   - fold each new block into local folding_acc (~30 field ops)
+   - verify each new checkpoint's decider proof (or follow the tip chain)
    - update Lens proofs for monitored namespaces
 
-join cost:     ONE zheng verification + namespace sync (~200 bytes per namespace)
+join cost:     ONE zheng verification + namespace sync (one lens opening per namespace)
 ongoing cost:  O(1) per block
 storage:       O(|monitored_namespaces| + |owned_records|)
 
@@ -421,9 +430,9 @@ STALE NEURON         snapshot + fast sync    reconnect → find common snapshot 
 
 BBG_root = H(Lens.commit(BBG_poly) ‖ Lens.commit(A) ‖ Lens.commit(N))
 
-every public query is a Lens opening against BBG_poly. every private query is a Lens opening against A(x) or N(x). every verification is O(1) field operations.
+every public query is a Lens opening against BBG_poly. every private query is a Lens opening against A(x) or N(x). every verification is one lens opening: hemera Merkle paths plus field operations, logarithmic in the committed size.
 
-light client join: < 10 KiB total.
+light client join: one checkpoint decider proof (goal ≤ 64 KB) plus one opening per monitored namespace.
 
 ---
 

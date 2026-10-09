@@ -62,12 +62,15 @@ size: unbounded        size: O(my slice)          size: ~constant
 normative join steps (structural-sync):
 
 ```
-1. obtain checkpoint = (BBG_root, folding_acc, height)   ~232–240 B
-2. final_proof = decide(folding_acc)                    zheng decider
-3. verify(final_proof, BBG_root)                        ~10–50 μs
-4. open namespaces of interest                          Lens ~200 B each
-5. maintain: fold each new block; refresh openings
+1. obtain checkpoint = (BBG_root, decider proof, height)  proof: goal ≤ 64 KB, measured TODO(F-numbers)
+2. verify(decider proof, BBG_root)                       one WHIR opening of the final accumulator
+                                                         goal ≤ 1 ms, measured TODO(F-numbers)
+3. open namespaces of interest                           one lens opening each (Merkle paths
+                                                         included), size TODO(F-numbers)
+4. maintain: follow the accumulated tip; refresh openings
 ```
+
+"fold" on this page means one step of zheng's hash-based accumulation (ARC-style, phase 3 of the [[proof-system-repair|proof system repair]]): the accumulator is one root plus a fixed number of claims, and the decider is one opening of it. until accumulation lands, foculus checks the tip chain step by step — one hemera per step, 13.9 µs per step measured, linear in height (`audit/sound-settlement-proofs-2026-10.md` §5.4).
 
 without fold, a thin client only has social checkpoints. **with fold in scope, tip trust is math.** that is the difference the scope buys.
 
@@ -185,7 +188,7 @@ numbers are Earth-scale, hub-domain typical. sparse domains and near-50/50 confl
 | gossip across domain | ~0.4–3 s | $O(\Delta\log\|D\|)$; invalid dies at verify |
 | $\phi^*$ contraction to $\tau$ | ~1–4 s hub | tens of s sparse fringe; longer under support-switching |
 | final + outputs spendable | ~1–4 s typical | deterministic; no confirmation-depth policy |
-| light: open balance after final | μs–ms verify + RTT | opening ~200 B against tip |
+| light: open balance after final | ms verify + RTT | one lens opening against tip (size TODO(F-numbers)) |
 | receiver sense NOTIFY | after verified credit at tip | never on bare unauthenticated push |
 | sigma refresh | after apply or verified open | |
 
@@ -206,10 +209,10 @@ epoch length is a latency UX knob, not a security parameter once $k_{\min}$ and 
 
 | stage | target | notes |
 |---|---|---|
-| download checkpoint + acc | ~200–few KB | from any peer; untrusted until decide |
-| `decide(folding_acc)` verify | ~10–50 μs class | proves history to that height |
-| open my namespaces | O(owned) + ~200 B / open | balances, notes, pending outs |
-| steady-state per tip | O(1) fold (~30 field ops class) + header | no re-decide from genesis |
+| download checkpoint + decider proof | goal ≤ 64 KB, measured TODO(F-numbers) | from any peer; untrusted until verified |
+| decider verify | goal ≤ 1 ms, measured TODO(F-numbers) | proves history to that height |
+| open my namespaces | O(owned) lens openings | balances, notes, pending outs |
+| steady-state per tip | one accumulation step per block (prover side) + header | no re-decide from genesis |
 | re-join after long offline | one decide on latest acc | same as first join |
 
 join latency is dominated by **download + RTT**, not by verify. verify is effectively free compared to network. product scope: cold start on phone must complete fold verify before treating openings as money-grade.
