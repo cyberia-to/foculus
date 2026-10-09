@@ -52,6 +52,7 @@ pub mod gossip;
 #[cfg(feature = "net")]
 pub mod radio_settle;
 pub mod pay_proof;
+pub mod proof;
 pub mod wire;
 pub mod reconcile;
 pub mod rewards;
