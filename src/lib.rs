@@ -52,6 +52,7 @@ pub mod gossip;
 #[cfg(feature = "net")]
 pub mod radio_settle;
 pub mod pay_proof;
+pub mod phi;
 pub mod proof;
 pub mod wire;
 pub mod reconcile;
@@ -91,6 +92,7 @@ pub use frames::{
     CyberFrame, RENDER_BIN, decode_events, decode_signal_frame, decode_signals,
     encode_intent_frame, encode_signal_frame,
 };
+pub use phi::{PhiBinding, PhiClaim, PhiGraph, compute_phi_star, verify_phi_claim};
 pub use pay_proof::{PayProofError, PayStatement, nullifier_set_hash, prove_pay, verify_pay};
 pub use rewards::{
     claim_from_links, mint_receipt_to_ledger, settle_epoch, settle_epoch_tickets,
