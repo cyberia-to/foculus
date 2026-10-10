@@ -25,7 +25,6 @@ impl Rng {
     fn usize(&mut self, max: usize) -> usize { (self.next() % max as u64) as usize }
     fn range(&mut self, lo: usize, hi: usize) -> usize { lo + self.usize(hi - lo) }
     fn bytes(&mut self, len: usize) -> Vec<u8> { (0..len).map(|_| (self.next() % 256) as u8).collect() }
-    fn bool_pct(&mut self, pct: u64) -> bool { self.next() % 100 < pct }
 }
 
 struct Device {

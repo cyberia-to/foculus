@@ -186,7 +186,6 @@ fn merge_storm_20_devices() {
     for dev in 0..n_devices {
         let mut reg = GSet::new();
         let device_id = format!("dev_{:02}", dev);
-        let mut prev = "0".repeat(64);
 
         for f in 0..files_per_device {
             let name = format!("dev{:02}_file{:02}.txt", dev, f);
@@ -206,7 +205,6 @@ fn merge_storm_20_devices() {
                 device_id: device_id.clone(),
                 das_root: "0".repeat(64),
             shard_copies: 1, deleted: false,};
-            prev = entry_hash;
             reg.insert(entry);
         }
 
@@ -255,7 +253,6 @@ fn merge_conflict_10_devices_same_file() {
         let device_id = format!("dev_{}", dev);
         let ts = 1000 + dev as u64 * 10; // different timestamps
         let shard_hashes = vec![format!("data_from_dev_{}", dev)];
-        let prev = "0".repeat(64);
         let entry_hash =
             FileEntry::compute_hash("shared.txt", &shard_hashes, ts, &device_id);
 
@@ -424,7 +421,6 @@ fn validated_merge_adversarial_1000() {
     for i in 0..1000 {
         let name = format!("adv_{:04}.txt", i);
         let shard_hashes = vec![format!("shard_{}", i)];
-        let prev = "0".repeat(64);
 
         if i < 500 {
             // Valid entry.
@@ -503,7 +499,6 @@ fn split_brain_rejoin() {
     for i in 0..10 {
         let name = format!("part_a_{}.txt", i);
         let shard_hashes = vec![format!("a_shard_{}", i)];
-        let prev = "0".repeat(64);
         let device_id = format!("dev_{}", i % 5);
         let entry_hash =
             FileEntry::compute_hash(&name, &shard_hashes, ts + i, &device_id);
@@ -525,7 +520,6 @@ fn split_brain_rejoin() {
     for i in 0..10 {
         let name = format!("part_b_{}.txt", i);
         let shard_hashes = vec![format!("b_shard_{}", i)];
-        let prev = "0".repeat(64);
         let device_id = format!("dev_{}", 5 + i % 5);
         let entry_hash =
             FileEntry::compute_hash(&name, &shard_hashes, ts + 100 + i, &device_id);
@@ -545,7 +539,6 @@ fn split_brain_rejoin() {
     // Both partitions also write to a shared filename.
     let shared_a = {
         let shard_hashes = vec!["shared_a".into()];
-        let prev = "0".repeat(64);
         let eh = FileEntry::compute_hash("conflict.txt", &shard_hashes, ts + 50, "dev_0");
         FileEntry {
             name: "conflict.txt".into(),
@@ -561,7 +554,6 @@ fn split_brain_rejoin() {
     };
     let shared_b = {
         let shard_hashes = vec!["shared_b".into()];
-        let prev = "0".repeat(64);
         let eh = FileEntry::compute_hash("conflict.txt", &shard_hashes, ts + 150, "dev_5");
         FileEntry {
             name: "conflict.txt".into(),
