@@ -62,7 +62,7 @@ fn main() {
         verify_ticket(inputs, &beacon, &cluster, easy_target(), &p).unwrap();
         let verify = t0.elapsed();
         let rel = TicketRelation::new(inputs, &beacon, &cluster, &p.ticket);
-        let Proof::Public(body) = &p.proof;
+        let Proof::Public(body) = &p.proof else { unreachable!() };
         let t0 = Instant::now();
         zheng::execution::certificate::verify(&rel.instance(), &body.certificate, &rel.public()).unwrap();
         let rows = t0.elapsed();
@@ -114,7 +114,7 @@ fn main() {
         let t0 = Instant::now();
         assert!(verify_pay(&p, &sig));
         let verify = t0.elapsed();
-        let Proof::Public(body) = &p;
+        let Proof::Public(body) = &p else { unreachable!() };
         println!("{legs} | {} | {} | {:.3} | {:.3}", body.certificate.free.len(), p.wire_size(), ms(prove), ms(verify));
     }
 
