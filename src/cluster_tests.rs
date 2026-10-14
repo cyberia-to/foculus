@@ -30,7 +30,7 @@ fn honest_cluster_sums_its_tickets() {
 fn one_bad_ticket_among_many_rejects_the_cluster() {
     let f = Fixture::new();
     let mut tickets = f.proven(0xA, 0, 8);
-    let crate::proof::Proof::Public(body) = &mut tickets[5].proof;
+    let crate::proof::Proof::Public(body) = &mut tickets[5].proof else { panic!("public profile") };
     body.certificate.free[0] = (body.certificate.free[0] + 1) % nebu::field::P;
     let r = verify_cluster(f.inputs(), &f.beacon, &f.cluster, &proof(tickets.clone()));
     assert!(matches!(r, Err(ClusterError::Ticket { index: 5, .. })));

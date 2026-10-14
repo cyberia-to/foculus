@@ -39,5 +39,7 @@ clap = { version = "4", features = ["derive"] }
 tracing-subscriber = { version = "0.3", optional = true }
 
 [dev-dependencies]
+# examples/device_profiles picks the prover backend (ZHENG_BACKEND)
+cyber-lens-gpu = { version = "0.1.0", path = "../lens/gpu", features = ["metal"] }
 proptest = "1"
 tempfile = "3"
