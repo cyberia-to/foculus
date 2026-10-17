@@ -92,3 +92,11 @@ class" line for the fold step itself does not.
   (`acc_commitment`/`fold_acc`/`absorb_ticket` all touch what `decide`
   ultimately proves over) and is out of scope for this measurement-only
   slice.
+- foculus#50 tried such an incremental commitment as an additive multiset
+  digest (four wrapping `u64` limbs summed over `seen` elements) and was
+  closed unmerged on 2026-10-17: a sum-of-hashes digest over Z_{2^64}^4 admits
+  generalized-birthday (Wagner k-tree) collisions over attacker-chosen
+  `(miner, nonce)` pairs, so it no longer binds `seen` the way the full rehash
+  does. a sound incremental form needs a collision-resistant set commitment
+  (a multiplicative hash in a large prime-order group, or a Merkle-style set
+  root), not a cheaper additive one.
