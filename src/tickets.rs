@@ -169,6 +169,23 @@ pub fn settle_score(
     score_u64(&hash32(&buf))
 }
 
+/// Role separation (specs/rewards.md §7): a miner that is itself a contender
+/// in the cluster it would settle can bias the sample by withholding a
+/// nonce that lowers its own share, so the deterrent §7 names is that it
+/// does not settle a cluster it contends in.
+///
+/// Not yet wired into [`try_settlement_ticket`]: gating there unconditionally
+/// would starve settlement whenever the only miner available for a cluster
+/// is also its sole contender (the common case for a single-node network,
+/// today's every test in this crate and phase 1's early genesis nodes) — a
+/// liveness regression the spec's forfeit-pricing deterrent avoids by
+/// pricing the conflict instead of forbidding it outright. Wiring this in
+/// needs that liveness trade-off decided first: exempt the single-miner
+/// case, or accept unsettled clusters until a second miner appears.
+pub fn role_separation_holds(miner: &[u8; 32], contribs: &[Contribution]) -> bool {
+    !contribs.iter().any(|c| &c.neuron == miner)
+}
+
 /// Try one nonce: compute marginals, test win. Returns ticket if it wins.
 pub fn try_settlement_ticket(
     base: &[tru::Link],
@@ -334,6 +351,60 @@ pub fn fold_acc(left: &ClusterAcc, right: &ClusterAcc) -> ClusterAcc {
     out
 }
 
+/// Why [`fold_acc_checked`] refused to fold two accumulators.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FoldOverlap {
+    /// Number of `(miner, nonce)` pairs present in both accumulators.
+    NonDisjoint(usize),
+}
+
+/// Fold two accumulators, rejecting overlap instead of mis-summing it.
+///
+/// specs/fold-mining.md requires the fold to be a commutative monoid that
+/// "counts each canonical (id, n) pair once," with a re-submitted nonce
+/// "detected at fold time and discarded." [`fold_acc`]'s overlap branch does
+/// neither: `out.sum_m[i] = left.sum_m[i] + right.sum_m[i]` runs unconditionally,
+/// so `fold_acc(x, x)` silently doubles every `sum_m` entry while `k` stays at
+/// `x.k` — `mean_shares` then returns double the true mean, corrupting the
+/// Shapley-share reward estimate `rewards.rs` mints against. A compact
+/// `ClusterAcc` has no raw per-ticket marginals to subtract back out on
+/// overlap, so there is no safe way to *compute* the right answer here; the
+/// only sound move is to surface the overlap to the caller. In honest
+/// operation two accumulators being folded together are built from disjoint
+/// leaves of the cluster's fold tree, so `Ok` is the expected path and
+/// `NonDisjoint` signals either a replayed ticket or a broken tree assembly.
+pub fn fold_acc_checked(left: &ClusterAcc, right: &ClusterAcc) -> Result<ClusterAcc, FoldOverlap> {
+    let inter = left.seen.intersection(&right.seen).count();
+    if inter > 0 {
+        return Err(FoldOverlap::NonDisjoint(inter));
+    }
+    let n = left.sum_m.len().max(right.sum_m.len());
+    let mut out = ClusterAcc::empty(n);
+    for t in left.seen.iter().chain(right.seen.iter()) {
+        out.seen.insert(*t);
+    }
+    if left.sum_m.len() == right.sum_m.len() && left.sum_m.len() == n {
+        for i in 0..n {
+            out.sum_m[i] = left.sum_m[i] + right.sum_m[i];
+        }
+        out.k = left.k.saturating_add(right.k);
+    } else if left.k >= right.k {
+        out = left.clone();
+        for t in &right.seen {
+            out.seen.insert(*t);
+        }
+        out.k = out.seen.len() as u64;
+    } else {
+        out = right.clone();
+        for t in &left.seen {
+            out.seen.insert(*t);
+        }
+        out.k = out.seen.len() as u64;
+    }
+    out.commitment = acc_commitment(&out);
+    Ok(out)
+}
+
 /// Pair-id for fold lottery binding.
 pub fn pair_id(left: &ClusterAcc, right: &ClusterAcc) -> [u8; 32] {
     let mut a = left.commitment;
@@ -474,6 +545,33 @@ pub fn assemble_fold_tree(
     level.into_iter().next().unwrap_or_default()
 }
 
+/// specs/rewards.md §7 "Residual: withholding": a settlement miner that is
+/// also a cluster contender can withhold a winning ticket that would lower
+/// its own share; the injectable bias is bounded by its compute share `q`:
+/// `bias(q) <= (mean - min) * q / (1 - q)`, where `range` is `mean - min`
+/// over the cluster's published marginal shares (measured in
+/// foculus/audit/withholding-bias.md).
+///
+/// `q` must be in `[0, 1)`; `q >= 1` is a majority attacker, which already
+/// breaks consensus by other means and is out of scope for this bound.
+pub fn withholding_bias_bound(range: Fx, q: Fx) -> Fx {
+    debug_assert!(
+        q < Fx::ONE,
+        "compute share must be < 1; q >= 1 is a majority attack, out of scope for this bound"
+    );
+    range * q.div(Fx::ONE - q)
+}
+
+/// §7 prices the cheap deterrent: "a withheld ticket forfeits its subsidy;
+/// calibrate so the forfeit exceeds the share-gain." `withholding_bias_bound`
+/// gives the maximum share-gain a withholder can buy at compute share `q`;
+/// scaled by the cluster's total settlement value it becomes a token amount.
+/// Returns true iff `ticket_subsidy` forfeits more than that amount, i.e. the
+/// deterrent is priced correctly for this cluster.
+pub fn forfeit_deters_withholding(ticket_subsidy: Fx, range: Fx, q: Fx, cluster_value: Fx) -> bool {
+    ticket_subsidy > withholding_bias_bound(range, q) * cluster_value
+}
+
 fn acc_commitment(acc: &ClusterAcc) -> [u8; 32] {
     let mut buf = Vec::with_capacity(ACC_DOMAIN.len() + 16 + acc.sum_m.len() * 8 + acc.seen.len() * 40);
     buf.extend_from_slice(ACC_DOMAIN);
@@ -559,6 +657,14 @@ mod tests {
     }
 
     #[test]
+    fn role_separation_rejects_a_contending_miner() {
+        let c = contribs();
+        assert!(!role_separation_holds(&h(10), &c)); // h(10) is contribs()[0].neuron
+        assert!(!role_separation_holds(&h(11), &c)); // contribs()[1].neuron
+        assert!(role_separation_holds(&h(0x91), &c)); // not a contender
+    }
+
+    #[test]
     fn self_fold_counts_samples() {
         let c = contribs();
         let cluster = h(0xC1);
@@ -624,6 +730,119 @@ mod tests {
         assert_eq!(ab.seen, ba.seen);
         for i in 0..c.len() {
             assert!((ab.sum_m[i].to_f64() - ba.sum_m[i].to_f64()).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn fold_acc_overlap_doubles_the_mean_a_monoid_law_violation() {
+        // Documents the existing gap in `fold_acc`: folding an accumulator
+        // with itself should be a no-op under a real monoid (it counts the
+        // same (id, n) pairs), but `sum_m` is re-summed unconditionally on
+        // overlap, so the mean silently doubles.
+        let c = contribs();
+        let cluster = h(0xC1);
+        let beacon = h(0xBE);
+        let tickets = grind_settlement(
+            &base(),
+            &c,
+            &Context::none(),
+            &FocusingParams::default(),
+            &beacon,
+            &cluster,
+            &h(0x91),
+            0,
+            16,
+            3,
+            easy_target(),
+        );
+        let acc = self_fold(c.len(), &tickets);
+        let folded_with_self = fold_acc(&acc, &acc);
+        assert_eq!(folded_with_self.k, acc.k, "k is unaffected by the bug");
+        for i in 0..c.len() {
+            let doubled = acc.sum_m[i] + acc.sum_m[i];
+            assert!(
+                (folded_with_self.sum_m[i].to_f64() - doubled.to_f64()).abs() < 1e-9,
+                "fold_acc(x, x) should reproduce the doubling bug this test documents"
+            );
+        }
+    }
+
+    #[test]
+    fn fold_acc_checked_rejects_overlap_instead_of_doubling() {
+        let c = contribs();
+        let cluster = h(0xC1);
+        let beacon = h(0xBE);
+        let tickets = grind_settlement(
+            &base(),
+            &c,
+            &Context::none(),
+            &FocusingParams::default(),
+            &beacon,
+            &cluster,
+            &h(0x91),
+            0,
+            16,
+            3,
+            easy_target(),
+        );
+        let acc = self_fold(c.len(), &tickets);
+        assert_eq!(
+            fold_acc_checked(&acc, &acc).unwrap_err(),
+            FoldOverlap::NonDisjoint(acc.seen.len())
+        );
+
+        // A partial overlap (one shared ticket) is rejected too.
+        let (first, rest) = tickets.split_first().unwrap();
+        let left = self_fold(c.len(), std::slice::from_ref(first));
+        let right = self_fold(c.len(), tickets.as_slice());
+        assert_eq!(
+            fold_acc_checked(&left, &right).unwrap_err(),
+            FoldOverlap::NonDisjoint(1)
+        );
+        let _ = rest;
+    }
+
+    #[test]
+    fn fold_acc_checked_matches_fold_acc_when_disjoint() {
+        let c = contribs();
+        let cluster = h(0xC1);
+        let beacon = h(0xBE);
+        let a_tickets = grind_settlement(
+            &base(),
+            &c,
+            &Context::none(),
+            &FocusingParams::default(),
+            &beacon,
+            &cluster,
+            &h(0xA),
+            0,
+            8,
+            2,
+            easy_target(),
+        );
+        let b_tickets = grind_settlement(
+            &base(),
+            &c,
+            &Context::none(),
+            &FocusingParams::default(),
+            &beacon,
+            &cluster,
+            &h(0xB),
+            100,
+            8,
+            2,
+            easy_target(),
+        );
+        let a = self_fold(c.len(), &a_tickets);
+        let b = self_fold(c.len(), &b_tickets);
+        let via_unchecked = fold_acc(&a, &b);
+        let via_checked = fold_acc_checked(&a, &b).expect("disjoint accumulators fold cleanly");
+        assert_eq!(via_unchecked.k, via_checked.k);
+        assert_eq!(via_unchecked.seen, via_checked.seen);
+        for i in 0..c.len() {
+            assert!(
+                (via_unchecked.sum_m[i].to_f64() - via_checked.sum_m[i].to_f64()).abs() < 1e-9
+            );
         }
     }
 
@@ -714,5 +933,55 @@ mod tests {
         // n_contrib=0 or base_n=0 must not divide by zero or panic.
         assert_eq!(banded_target(1024, 0, 8), 128);
         assert_eq!(banded_target(1024, 8, 0), 1024 * 8);
+    }
+
+    #[test]
+    fn withholding_bias_bound_matches_measured_shape() {
+        // foculus/audit/withholding-bias.md: q=0.05 bound≈0.000106,
+        // q=0.50 bound≈0.002012, range=mean-min from that run ≈ 0.002012.
+        let range = Fx::from_ratio(2012, 1_000_000);
+        let bound_05 = withholding_bias_bound(range, Fx::from_ratio(5, 100));
+        let bound_50 = withholding_bias_bound(range, Fx::from_ratio(50, 100));
+        assert!(bound_05 > Fx::ZERO);
+        assert!(
+            bound_50 > bound_05,
+            "bound must grow with compute share q, per (mean-min)*q/(1-q)"
+        );
+    }
+
+    #[test]
+    fn withholding_bias_bound_is_zero_at_zero_share() {
+        let range = Fx::from_ratio(2012, 1_000_000);
+        assert_eq!(withholding_bias_bound(range, Fx::ZERO), Fx::ZERO);
+    }
+
+    #[test]
+    fn forfeit_below_bound_does_not_deter() {
+        let range = Fx::from_ratio(2012, 1_000_000);
+        let q = Fx::from_ratio(25, 100);
+        let cluster_value = Fx::from_int(1_000_000);
+        let bound_value = withholding_bias_bound(range, q) * cluster_value;
+        let underpriced = bound_value - Fx::from_int(1);
+        assert!(!forfeit_deters_withholding(
+            underpriced,
+            range,
+            q,
+            cluster_value
+        ));
+    }
+
+    #[test]
+    fn forfeit_above_bound_deters() {
+        let range = Fx::from_ratio(2012, 1_000_000);
+        let q = Fx::from_ratio(25, 100);
+        let cluster_value = Fx::from_int(1_000_000);
+        let bound_value = withholding_bias_bound(range, q) * cluster_value;
+        let overpriced = bound_value + Fx::from_int(1);
+        assert!(forfeit_deters_withholding(
+            overpriced,
+            range,
+            q,
+            cluster_value
+        ));
     }
 }
