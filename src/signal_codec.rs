@@ -1,19 +1,22 @@
 //! Canonical, bounded, full Signal encoding for durable storage.
+//!
+//! Version 2 carries [`crate::proof::Proof`]. Version 1 is still decoded
+//! when it carries no proof; a version-1 signal with a proof (a legacy
+//! HyperNova body, which proved nothing) is rejected.
 pub(crate) mod cursor;
 mod proof;
 use crate::{BoxMoveRecord, CyberlinkRecord, Signal};
 use cursor::{Reader, Writer};
 
 pub const MAGIC: &[u8] = b"foculus/signal\0";
-pub const VERSION: u8 = 1;
+pub const VERSION: u8 = 2;
+/// Oldest version still decoded (proof-less signals only).
+pub const LEGACY_VERSION: u8 = 1;
 pub const MAX_SIGNAL_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_LINKS: usize = 16_384;
 pub const MAX_DELTAS: usize = 65_536;
 pub const MAX_BOX_MOVES: usize = 65_536;
-pub use proof::{
-    MAX_COEFFICIENTS, MAX_COLUMN_INDEX, MAX_COLUMNS, MAX_FIELD_BYTES, MAX_MATRIX_EVALS,
-    MAX_MERKLE_PATH, MAX_ROUNDS,
-};
+pub use proof::MAX_CERTIFICATE_VALUES;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodecError {
@@ -28,6 +31,8 @@ pub enum ErrorKind {
     Limit(&'static str),
     UnsupportedVersion(u8),
     UnsupportedProof,
+    /// A version-1 signal carrying a legacy proof.
+    LegacyProof,
 }
 impl std::fmt::Display for CodecError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -44,7 +49,7 @@ pub fn proof_hash(signal: &Signal) -> Result<[u8; 32], CodecError> {
     let mut out = Writer::new();
     proof::encode(&mut out, proof)?;
     let mut hash = cyber_hemera::Hasher::new();
-    hash.update(b"foculus/signal-proof/v1\0");
+    hash.update(b"foculus/signal-proof/v2\0");
     hash.update(&out.bytes);
     Ok(*hash.finalize().as_bytes())
 }
@@ -98,7 +103,7 @@ pub fn decode_signal(bytes: &[u8]) -> Result<Signal, CodecError> {
         return Err(input.error(ErrorKind::Invalid("signal domain")));
     }
     let version = input.byte()?;
-    if version != VERSION {
+    if version != VERSION && version != LEGACY_VERSION {
         return Err(input.error(ErrorKind::UnsupportedVersion(version)));
     }
     let neuron = input.array()?;
@@ -110,6 +115,9 @@ pub fn decode_signal(bytes: &[u8]) -> Result<Signal, CodecError> {
     let delta_pi = deltas(&mut input)?;
     let box_moves = boxes(&mut input)?;
     let proof = if input.flag()? {
+        if version == LEGACY_VERSION {
+            return Err(input.error(ErrorKind::LegacyProof));
+        }
         Some(proof::decode(&mut input)?)
     } else {
         None

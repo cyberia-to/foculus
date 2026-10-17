@@ -13,8 +13,9 @@
 //! ```
 //!
 //! Second lottery (fold mining): aggregate winning tickets into a commutative
-//! monoid `(Σ m, k, commitment)`. HyperNova σ is produced by [`crate::ticket_proof`]
-//! (real zheng fold + decide) on top of this monoid.
+//! monoid `(Σ m, k, commitment)`. Each ticket's marginals are proven by
+//! [`crate::ticket_proof`]; a cluster is checked ticket by ticket in
+//! [`crate::cluster`] — the monoid shape stays for later accumulation.
 
 use std::collections::BTreeSet;
 
@@ -146,6 +147,7 @@ pub fn settle_score(
 }
 
 /// Try one nonce: compute marginals, test win. Returns ticket if it wins.
+#[allow(clippy::too_many_arguments)]
 pub fn try_settlement_ticket(
     base: &[tru::Link],
     contribs: &[Contribution],
@@ -178,6 +180,7 @@ pub fn try_settlement_ticket(
 }
 
 /// Grind nonces in `[start, start+max_attempts)` until `want` winners or exhausted.
+#[allow(clippy::too_many_arguments)]
 pub fn grind_settlement(
     base: &[tru::Link],
     contribs: &[Contribution],
@@ -235,21 +238,39 @@ pub fn verify_settlement_ticket(
 
 /// Fold a ticket into the monoid (idempotent on (miner, nonce)).
 pub fn absorb_ticket(acc: &mut ClusterAcc, ticket: &SettlementTicket) {
+    if absorb_unsealed(acc, ticket) {
+        acc.commitment = acc_commitment(acc);
+    }
+}
+
+/// Fold many tickets, hashing the commitment once at the end — linear in
+/// the number of tickets where repeated [`absorb_ticket`] is quadratic.
+pub fn absorb_tickets<'a>(acc: &mut ClusterAcc, tickets: impl IntoIterator<Item = &'a SettlementTicket>) {
+    let mut changed = false;
+    for t in tickets {
+        changed |= absorb_unsealed(acc, t);
+    }
+    if changed {
+        acc.commitment = acc_commitment(acc);
+    }
+}
+
+/// Add one ticket without resealing; `true` if it was absorbed.
+fn absorb_unsealed(acc: &mut ClusterAcc, ticket: &SettlementTicket) -> bool {
+    if acc.sum_m.len() != ticket.marginals.len() && acc.k != 0 {
+        return false; // dimension mismatch — drop
+    }
     if !acc.seen.insert((ticket.miner, ticket.nonce)) {
-        return;
+        return false;
     }
     if acc.sum_m.len() != ticket.marginals.len() {
-        if acc.k == 0 {
-            acc.sum_m = vec![Fx::ZERO; ticket.marginals.len()];
-        } else {
-            return; // dimension mismatch — drop
-        }
+        acc.sum_m = vec![Fx::ZERO; ticket.marginals.len()];
     }
     for (s, m) in acc.sum_m.iter_mut().zip(ticket.marginals.iter()) {
         *s = *s + *m;
     }
     acc.k = acc.k.saturating_add(1);
-    acc.commitment = acc_commitment(acc);
+    true
 }
 
 /// Self-fold: absorb a batch of tickets into one accumulator.
@@ -273,18 +294,14 @@ pub fn fold_acc(left: &ClusterAcc, right: &ClusterAcc) -> ClusterAcc {
         for i in 0..n {
             out.sum_m[i] = left.sum_m[i] + right.sum_m[i];
         }
-        // k from unique pairs — if both absorbed same ticket, seen dedupes
-        // but sums would double-count if we just add. Correct path: re-absorb
-        // is hard without raw tickets. Spec monoid counts each (id,n) once;
-        // for honest non-overlapping self-folds, sum is fine. When overlap,
-        // use left and only add right's exclusive mass by ratio — approximate
-        // with: if no intersection, add; else keep left+right with k=|seen|.
+        // Overlapping inputs double-count their shared tickets' sums: fold_acc
+        // is exact only on disjoint sets. Settlement never trusts it — the
+        // cluster sum is rebuilt from verified tickets (crate::cluster).
         let inter = left.seen.intersection(&right.seen).count() as u64;
         if inter == 0 {
             out.k = left.k.saturating_add(right.k);
         } else {
-            // Overlap: recompute k from seen; scale is approximate for demo.
-            // Prefer left's sums when fully overlapping.
+            // overlap: k from the union, sums approximate (see above)
             out.k = out.seen.len() as u64;
             if left.k + right.k > 0 {
                 // linear blend — honest miners don't resubmit
@@ -346,6 +363,7 @@ pub fn fold_score(
 }
 
 /// Try one fold lottery nonce.
+#[allow(clippy::too_many_arguments)]
 pub fn try_fold_ticket(
     beacon: &[u8; 32],
     cluster: &ClusterId,
@@ -375,6 +393,7 @@ pub fn try_fold_ticket(
 }
 
 /// Grind fold tickets until one wins or attempts exhausted.
+#[allow(clippy::too_many_arguments)]
 pub fn grind_fold(
     beacon: &[u8; 32],
     cluster: &ClusterId,
@@ -477,168 +496,5 @@ fn score_u64(h: &[u8; 32]) -> u64 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use tru::Link;
-
-    fn h(b: u8) -> [u8; 32] {
-        let mut x = [0u8; 32];
-        x[0] = b;
-        x
-    }
-
-    fn base() -> Vec<Link> {
-        vec![
-            Link::stake(h(1), h(2), 100),
-            Link::stake(h(2), h(3), 100),
-            Link::stake(h(3), h(1), 100),
-        ]
-    }
-
-    fn contribs() -> Vec<Contribution> {
-        vec![
-            Contribution {
-                neuron: h(10),
-                links: vec![Link::stake(h(2), h(1), 8000)],
-                surprise: Fx::ONE,
-            },
-            Contribution {
-                neuron: h(11),
-                links: vec![Link::stake(h(3), h(1), 6000)],
-                surprise: Fx::ONE,
-            },
-        ]
-    }
-
-    #[test]
-    fn easy_grind_finds_winners() {
-        let c = contribs();
-        let cluster = h(0xC1);
-        let beacon = h(0xBE);
-        let tickets = grind_settlement(
-            &base(),
-            &c,
-            &Context::none(),
-            &FocusingParams::default(),
-            &beacon,
-            &cluster,
-            &h(0x91),
-            0,
-            32,
-            4,
-            easy_target(),
-        );
-        assert_eq!(tickets.len(), 4);
-        for t in &tickets {
-            assert!(verify_settlement_ticket(t, &beacon, &cluster, easy_target()));
-        }
-    }
-
-    #[test]
-    fn self_fold_counts_samples() {
-        let c = contribs();
-        let cluster = h(0xC1);
-        let beacon = h(0xBE);
-        let tickets = grind_settlement(
-            &base(),
-            &c,
-            &Context::none(),
-            &FocusingParams::default(),
-            &beacon,
-            &cluster,
-            &h(0x91),
-            0,
-            16,
-            3,
-            easy_target(),
-        );
-        let acc = self_fold(c.len(), &tickets);
-        assert_eq!(acc.k, 3);
-        assert_eq!(acc.seen.len(), 3);
-        // absorb duplicate is no-op
-        let mut acc2 = acc.clone();
-        absorb_ticket(&mut acc2, &tickets[0]);
-        assert_eq!(acc2.k, 3);
-    }
-
-    #[test]
-    fn fold_acc_is_commutative() {
-        let c = contribs();
-        let cluster = h(0xC1);
-        let beacon = h(0xBE);
-        let a_tickets = grind_settlement(
-            &base(),
-            &c,
-            &Context::none(),
-            &FocusingParams::default(),
-            &beacon,
-            &cluster,
-            &h(0xA),
-            0,
-            8,
-            2,
-            easy_target(),
-        );
-        let b_tickets = grind_settlement(
-            &base(),
-            &c,
-            &Context::none(),
-            &FocusingParams::default(),
-            &beacon,
-            &cluster,
-            &h(0xB),
-            100,
-            8,
-            2,
-            easy_target(),
-        );
-        let a = self_fold(c.len(), &a_tickets);
-        let b = self_fold(c.len(), &b_tickets);
-        let ab = fold_acc(&a, &b);
-        let ba = fold_acc(&b, &a);
-        assert_eq!(ab.k, ba.k);
-        assert_eq!(ab.seen, ba.seen);
-        for i in 0..c.len() {
-            assert!((ab.sum_m[i].to_f64() - ba.sum_m[i].to_f64()).abs() < 1e-9);
-        }
-    }
-
-    #[test]
-    fn assemble_tree_merges_miners() {
-        let c = contribs();
-        let cluster = h(0xC1);
-        let beacon = h(0xBE);
-        let leaves: Vec<_> = [0xA, 0xB, 0xC]
-            .iter()
-            .map(|&m| {
-                let t = grind_settlement(
-                    &base(),
-                    &c,
-                    &Context::none(),
-                    &FocusingParams::default(),
-                    &beacon,
-                    &cluster,
-                    &h(m),
-                    m as u64 * 50,
-                    8,
-                    2,
-                    easy_target(),
-                );
-                self_fold(c.len(), &t)
-            })
-            .collect();
-        let root = assemble_fold_tree(&beacon, &cluster, &h(0xFF), &leaves, easy_target());
-        assert!(root.k >= 6);
-        let neurons: Vec<_> = c.iter().map(|x| x.neuron).collect();
-        let shares = root.mean_shares(&neurons);
-        let sum: f64 = shares.iter().map(|(_, s)| s.to_f64()).sum();
-        assert!(sum > 0.0);
-    }
-
-    #[test]
-    fn k_min_hoeffding() {
-        // ε=0.1, δ=0.01 → ln(200)/(2*0.01) ≈ 5.3/0.02 ≈ 265
-        let k = ClusterAcc::k_min(0.1, 0.01);
-        assert!(k > 100 && k < 400);
-    }
-}
+#[path = "tickets_tests.rs"]
+mod tests;
