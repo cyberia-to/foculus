@@ -7,7 +7,8 @@
 //! as a small one but a much lower win probability per unit of wall-clock
 //! time. This test measures the real per-attempt cost at two cluster sizes
 //! and checks that `tickets::banded_target` equalizes expected time-to-win
-//! where a flat target does not.
+//! where a flat target does not. Run it explicitly:
+//! `cargo test --release --test progress_freedom -- --ignored --nocapture`.
 
 use foculus::settlement::Contribution;
 use foculus::tickets::{banded_target, easy_target, try_settlement_ticket};
@@ -59,7 +60,12 @@ fn attempt_cost_secs(contribs: &[Contribution], iters: u64) -> f64 {
     start.elapsed().as_secs_f64() / iters as f64
 }
 
+// Wall-clock measurement: its absolute ratios move with machine load and
+// build profile (see audit/progress-freedom-banding.md, 2026-10-17 addendum),
+// so it does not gate `cargo test`. The deterministic banding arithmetic is
+// covered by the unit tests in src/tickets.rs and src/rewards.rs.
 #[test]
+#[ignore = "wall-clock measurement; run with --release -- --ignored --nocapture"]
 fn banded_target_equalizes_expected_time_to_win_flat_target_does_not() {
     let small = cluster(4);
     let large = cluster(32);
