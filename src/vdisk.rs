@@ -396,8 +396,17 @@ impl VDiskManager {
                         }
                     }
 
-                    // Step 4: update registry.
-                    let timestamp = store::now_ms();
+                    // Step 4: update registry. The registry is last-writer-wins
+                    // by timestamp with ties broken by entry hash, so a rechunk
+                    // in the same millisecond as the entry it rewrites could
+                    // lose the tie and silently keep the old k/n. A rewrite
+                    // must supersede what it rewrites: stamp it strictly later.
+                    let prev_ts = self
+                        .registry
+                        .files
+                        .get(file_name)
+                        .map_or(0, |e| e.timestamp);
+                    let timestamp = store::now_ms().max(prev_ts.saturating_add(1));
                     let device_id = "vdisk".to_string();
                     let entry_hash = FileEntry::compute_hash(
                         file_name,
@@ -774,6 +783,37 @@ mod tests {
         // Verify data is still readable.
         let recovered = mgr.get_file("rechunk_me.txt").unwrap();
         assert_eq!(&recovered, &data[..]);
+    }
+
+    #[test]
+    fn rechunk_supersedes_an_entry_stamped_at_or_after_now() {
+        // The registry is LWW by timestamp, ties broken by entry hash. A
+        // rechunk landing in the same millisecond as put_file (or after a
+        // peer's slightly-ahead clock) must still replace the entry it
+        // rewrites. Push the existing entry's stamp ahead of now to make
+        // that case deterministic.
+        let (_dir, mut mgr) = setup();
+        mgr.create_disk(DiskConfig {
+            name: "work".into(),
+            redundancy: Redundancy::Tolerate(1),
+            tier: Tier::Active,
+            cache_policy: CachePolicy::Lru,
+            shard_copies: 1,
+        })
+        .unwrap();
+        mgr.attach("dev_a", "work", 10_000_000).unwrap();
+        mgr.attach("dev_b", "work", 10_000_000).unwrap();
+        mgr.put_file("work", "tie.txt", b"same-millisecond rechunk").unwrap();
+        let ahead = store::now_ms() + 1_000;
+        mgr.registry.files.get_mut("tie.txt").unwrap().timestamp = ahead;
+
+        mgr.attach("dev_c", "work", 10_000_000).unwrap();
+        mgr.attach("dev_d", "work", 10_000_000).unwrap();
+        assert_eq!(mgr.rechunk("work").unwrap(), (1, 0));
+
+        let after = mgr.registry().get("tie.txt").unwrap();
+        assert_eq!((after.k, after.n), (3, 4), "rechunk lost the LWW tie");
+        assert!(after.timestamp > ahead);
     }
 
     #[test]
