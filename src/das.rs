@@ -94,10 +94,13 @@ pub fn verify_availability(
     (passed, samples.len())
 }
 
-/// Confidence level for k successful samples out of k attempts.
-/// 1 - (1/2)^k assuming adversary withholds >50%.
-pub fn confidence(successful_samples: usize) -> f64 {
-    1.0 - 0.5_f64.powi(successful_samples as i32)
+/// Confidence in availability after `successful_samples` honest samples,
+/// as bits: an adversary withholding at least half the shards survives k
+/// random samples with probability 2^-k, so confidence = 1 - 2^-k. The
+/// exponent is the honest number; a float would hide it (and foculus does
+/// not decide anything in floating point).
+pub fn confidence_bits(successful_samples: usize) -> u32 {
+    u32::try_from(successful_samples).unwrap_or(u32::MAX)
 }
 
 /// Serialize a shard's field elements to bytes for hashing.
@@ -151,9 +154,9 @@ mod tests {
 
     #[test]
     fn confidence_calculation() {
-        assert!(confidence(20) > 0.999999);
-        assert!(confidence(30) > 0.999999999);
-        assert!((confidence(1) - 0.5).abs() < 1e-10);
+        assert_eq!(confidence_bits(20), 20);
+        assert_eq!(confidence_bits(1), 1);
+        assert_eq!(confidence_bits(0), 0);
     }
 
     #[test]

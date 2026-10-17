@@ -1,13 +1,15 @@
 // ---
-// tags: cybergraph, rust
+// tags: foculus, rust
 // crystal-type: source
 // crystal-domain: cyber
 // ---
 //! Verifiable Delay Function over the Goldilocks field.
 //!
 //! Sequential squaring: output = x^(2^T) mod p.
-//! Layer 2 ordering primitive — owned by cybergraph per structural-sync spec.
-//! Proves minimum wall-clock time elapsed between signals; rate-limits equivocation.
+//! Layer 2 ordering primitive, owned by foculus (specs/delay.md). Goldilocks
+//! has known order, so this is sequential work verified by recomputation, not
+//! a VDF in the cryptographic sense — the spec names the group-of-unknown-order
+//! construction that replaces it; the interface and the chain binding are fixed here.
 
 use nebu::Goldilocks;
 
