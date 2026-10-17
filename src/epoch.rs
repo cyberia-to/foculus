@@ -309,7 +309,7 @@ mod tests {
     use super::*;
     use crate::rewards::claim_from_links;
     use crate::vdf;
-    use tru::Link;
+    use tru::{Fx, Link};
 
     fn h(b: u8) -> [u8; 32] {
         let mut x = [0u8; 32];
@@ -389,8 +389,8 @@ mod tests {
             want: 4,
             max_attempts: 64,
             miner: h(10),
-            precision_epsilon: 0.1,
-            precision_delta: 0.01,
+            precision_epsilon: Fx::from_ratio(1, 10),
+            precision_delta: Fx::from_ratio(1, 100),
             ..TicketPolicy::default()
         };
         let err = runner

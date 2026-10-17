@@ -104,11 +104,11 @@ pub struct TicketPolicy {
     /// Local miner id (usually the settler neuron).
     pub miner: [u8; 32],
     /// Hoeffding ε for the decide gate: [`ClusterAcc::meets_precision`] must
-    /// hold on the root accumulator before a receipt mints. Default 1.0
+    /// hold on the root accumulator before a receipt mints. Default `Fx::ONE`
     /// (k_min = 1) reproduces the old ungated behavior.
-    pub precision_epsilon: f64,
+    pub precision_epsilon: Fx,
     /// Hoeffding δ for the decide gate; see `precision_epsilon`.
-    pub precision_delta: f64,
+    pub precision_delta: Fx,
 }
 
 impl Default for TicketPolicy {
@@ -120,8 +120,8 @@ impl Default for TicketPolicy {
             settle_target: easy_target(),
             fold_target: easy_target(),
             miner: [0u8; 32],
-            precision_epsilon: 1.0,
-            precision_delta: 1.0,
+            precision_epsilon: Fx::ONE,
+            precision_delta: Fx::ONE,
         }
     }
 }
@@ -722,8 +722,8 @@ mod tests {
             want: 4,
             max_attempts: 64,
             miner: h(10),
-            precision_epsilon: 0.1,
-            precision_delta: 0.01,
+            precision_epsilon: Fx::from_ratio(1, 10),
+            precision_delta: Fx::from_ratio(1, 100),
             ..TicketPolicy::default()
         };
         let err = settle_epoch_tickets(
