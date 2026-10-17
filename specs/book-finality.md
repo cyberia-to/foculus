@@ -31,7 +31,7 @@ the partition rule oikos foundation 2 asks for ("a partition retains pending obl
 
 ## what this does not bind yet
 
-`bind()` commits domain-tag, signal_id, height, root, nullifier hash and grade4 — it does not commit a book identifier. two books whose height and 32-byte root happen to collide would produce interchangeable evidence; in practice a book's root is a hemera commitment over its whole state, so an accidental collision is exactly as unlikely as any other particle collision. an explicit book-id in the binding is a hardening step for later, not required to exercise the property for phase 1.
+`bind()` commits domain-tag, book_id, signal_id, height, root, nullifier hash and grade4 (`src/finality_evidence.rs`). binding the book identifier closes the root-collision exposure: two books whose height and 32-byte root coincide — two fresh books at genesis are the obvious case — still issue evidence that is never interchangeable.
 
 ## exercised on two books
 

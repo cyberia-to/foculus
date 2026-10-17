@@ -25,6 +25,9 @@ fn spike_domain(hot: Fx) -> Domain {
     )
 }
 
+/// Book A's identity, bound into every piece of evidence it issues.
+const BOOK_A: [u8; 32] = [0xAA; 32];
+
 /// A pending cross-book condition: book B waits for book A to certify
 /// `signal_id`, and accepts only evidence that verifies against A's own tip.
 fn resolve_cross_book_condition(evidence: Option<&FinalityEvidence>, source_tip: &Tip) -> bool {
@@ -40,7 +43,7 @@ fn book_a_settles_locally_independent_of_book_b() {
     let tip_a = Tip::from_local(&Checkpoint { root: [0xA0; 32], acc: None, height: 41 });
     let tip_b = Tip::from_local(&Checkpoint { root: [0xB0; 32], acc: None, height: 7 });
 
-    let ev_a = FinalityEvidence::issue_local([1u8; 32], &tip_a, &[]);
+    let ev_a = FinalityEvidence::issue_local(BOOK_A, [1u8; 32], &tip_a, &[]);
     assert!(ev_a.verify(&tip_a), "book A settles the signal in its own view");
     assert!(
         !ev_a.verify(&tip_b),
@@ -57,7 +60,7 @@ fn cross_book_condition_waits_while_source_has_not_certified() {
     // certified it yet, so there is no evidence for B to accept.
     let cold_domain = spike_domain(fx(5, 100));
     let no_evidence = FinalityEvidence::issue_from_domain(
-        signal, &tip_a, &[], fx(5, 100), &cold_domain,
+        BOOK_A, signal, &tip_a, &[], fx(5, 100), &cold_domain,
         Fx::ZERO, fx(85, 1000), fx(74, 100), fx(225, 100), fx(15, 10),
     );
     assert!(no_evidence.is_none(), "A has not finalized; nothing to certify yet");
@@ -76,7 +79,7 @@ fn cross_book_condition_resolves_once_source_certifies() {
     // in A's domain: A finalizes it locally and can hand out certified evidence.
     let hot_domain = spike_domain(fx(85, 100));
     let evidence = FinalityEvidence::issue_from_domain(
-        signal, &tip_a, &[], fx(85, 100), &hot_domain,
+        BOOK_A, signal, &tip_a, &[], fx(85, 100), &hot_domain,
         fx(3, 1000), fx(85, 1000), fx(74, 100), fx(225, 100), fx(15, 10),
     );
     assert!(evidence.is_some(), "A finalized the particle in its own domain");
