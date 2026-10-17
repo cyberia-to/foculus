@@ -18,7 +18,7 @@ use tru::{impulse, Context, FocusingParams, Link};
 use crate::beacon::{
     self, claims_root, open_beacon, verify_beacon, BeaconArtifact, GENESIS_PREV, TEST_OUTER_T,
 };
-use crate::cluster::{partition_into_clusters, Adjacency};
+use crate::partition::{partition_into_clusters, Adjacency};
 use crate::rewards::{
     allocate_budget_pub, contributions_with_rho, receipt_hash_pub, RewardClaim, RewardError,
     SettleReceipt, TicketPolicy,
@@ -80,7 +80,7 @@ impl EpochRunner {
     }
 
     /// The canonical partition of the epoch's claims into clusters
-    /// ([[reward specification]] §7, `cluster::partition_into_clusters`):
+    /// ([[reward specification]] §7, `partition::partition_into_clusters`):
     /// connected components of overlapping ε-supports over `adjacency`, at
     /// the given radius. Available in any phase once claims exist — freezing
     /// only fixes `claims_root`, it does not fix the partition.
@@ -483,7 +483,7 @@ mod tests {
             .unwrap();
         runner.freeze().unwrap();
 
-        let adjacency = crate::cluster::Adjacency::new();
+        let adjacency = crate::partition::Adjacency::new();
         let clusters = runner.clusters(&adjacency, 0);
         assert_eq!(clusters, vec![vec![0], vec![1]]);
     }
@@ -499,7 +499,7 @@ mod tests {
             .unwrap();
         runner.freeze().unwrap();
 
-        let mut adjacency = crate::cluster::Adjacency::new();
+        let mut adjacency = crate::partition::Adjacency::new();
         adjacency.insert(h(2), vec![h(3)]);
         let clusters = runner.clusters(&adjacency, 1);
         assert_eq!(clusters, vec![vec![0, 1]]);
