@@ -1128,6 +1128,9 @@ mod settle_net {
     }
 
     fn from_hex(s: &str) -> Result<Vec<u8>> {
+        if !s.is_ascii() {
+            bail!("non-ASCII hex");
+        }
         if s.len() % 2 != 0 {
             bail!("odd hex length");
         }
@@ -1137,6 +1140,21 @@ mod settle_net {
                 u8::from_str_radix(&s[i..i + 2], 16).map_err(|e| anyhow::anyhow!(e.to_string()))
             })
             .collect()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn from_hex_rejects_non_ascii_without_panicking() {
+            // a multi-byte UTF-8 char keeps the byte length even (so the
+            // odd-length guard does not catch it) while landing a
+            // `&s[i..i+2]` slice boundary mid-character; `from_hex` must
+            // error, not panic.
+            assert!(from_hex("aéb").is_err());
+            assert!(parse_topic("aéb").is_err());
+        }
     }
 }
 

@@ -83,6 +83,10 @@ pub enum RewardError {
     BudgetZero,
     /// Ticket grind produced no winning samples.
     NoTickets,
+    /// Root accumulator's sample count k is below the Hoeffding minimum for
+    /// (precision_epsilon, precision_delta): the MC estimate is not yet
+    /// trustworthy enough to mint against.
+    InsufficientPrecision { k: u64, k_min: u64 },
 }
 
 /// How many settlement tickets / grind budget for [`settle_epoch_tickets`].
@@ -99,6 +103,12 @@ pub struct TicketPolicy {
     pub fold_target: u64,
     /// Local miner id (usually the settler neuron).
     pub miner: [u8; 32],
+    /// Hoeffding ε for the decide gate: [`ClusterAcc::meets_precision`] must
+    /// hold on the root accumulator before a receipt mints. Default `Fx::ONE`
+    /// (k_min = 1) reproduces the old ungated behavior.
+    pub precision_epsilon: Fx,
+    /// Hoeffding δ for the decide gate; see `precision_epsilon`.
+    pub precision_delta: Fx,
 }
 
 impl Default for TicketPolicy {
@@ -110,6 +120,8 @@ impl Default for TicketPolicy {
             settle_target: easy_target(),
             fold_target: easy_target(),
             miner: [0u8; 32],
+            precision_epsilon: Fx::ONE,
+            precision_delta: Fx::ONE,
         }
     }
 }
@@ -357,6 +369,12 @@ pub fn settle_with_peer_accs(
     if root.k == 0 {
         return Err(RewardError::NoTickets);
     }
+    if !root.meets_precision(policy.precision_epsilon, policy.precision_delta) {
+        return Err(RewardError::InsufficientPrecision {
+            k: root.k,
+            k_min: ClusterAcc::k_min(policy.precision_epsilon, policy.precision_delta),
+        });
+    }
     let neurons: Vec<[u8; 32]> = contribs.iter().map(|c| c.neuron).collect();
     let raw_shares = root.mean_shares(&neurons);
     let shares = allocate_budget(&raw_shares, budget, directed_total)?;
@@ -469,18 +487,14 @@ pub fn mint_receipt_to_ledger(
     )
 }
 
-/// Nonnegative weight for proportional split. Any strictly positive Fx maps
-/// to at least 1 so tiny Shapley shares still receive budget mass.
+/// Nonnegative weight for proportional split, read straight off Fx's own
+/// fixed-point representation (never through `to_f64`, which is display-only
+/// and not a step any computation tru proves — arithmetic.md).
 fn fx_weight(x: Fx) -> u128 {
     if x <= Fx::ZERO {
         return 0;
     }
-    let f = x.to_f64();
-    if f <= 0.0 {
-        return 0;
-    }
-    let w = (f * 1_000_000_000_000.0) as u128;
-    w.max(1)
+    x.raw().as_u64() as u128
 }
 
 fn receipt_hash(epoch: u64, beacon: &[u8; 32], shares: &[SettledShare]) -> [u8; 32] {
@@ -623,6 +637,32 @@ mod tests {
     }
 
     #[test]
+    fn fx_weight_matches_raw_scaled_integer() {
+        // fx_weight must read Fx's own scaled representation directly, never
+        // round-trip through to_f64 (arithmetic.md: never a step tru proves).
+        assert_eq!(fx_weight(Fx::ZERO), 0);
+        assert_eq!(fx_weight(Fx::ONE), 1u128 << 32);
+        let third = Fx::from_ratio(1, 3);
+        assert_eq!(fx_weight(third), third.raw().as_u64() as u128);
+    }
+
+    #[test]
+    fn allocate_budget_splits_by_raw_fixed_point_weight() {
+        // 1/3 and 2/3 in fixed point: the split must follow Fx's own raw
+        // scaled integers exactly, deterministically, with no float rounding
+        // drift from the old to_f64()*1e12 conversion.
+        let a = Fx::from_ratio(1, 3);
+        let b = Fx::from_ratio(2, 3);
+        let raw = vec![(h(1), a), (h(2), b)];
+        let shares = allocate_budget(&raw, 300, a + b).unwrap();
+        assert_eq!(shares[0].amount + shares[1].amount, 300, "conservation");
+        let (wa, wb) = (fx_weight(a), fx_weight(b));
+        let expected_a = ((wa * 300) / (wa + wb)) as u64;
+        assert_eq!(shares[0].amount, expected_a);
+        assert_eq!(shares[1].amount, 300 - expected_a);
+    }
+
+    #[test]
     fn empty_claims_err() {
         let err = settle_epoch(
             1,
@@ -665,5 +705,44 @@ mod tests {
         .unwrap();
         assert!(verify_receipt(&rec));
         assert_eq!(share_of(&rec, &h(10)), 1000);
+    }
+
+    #[test]
+    fn tight_precision_gate_rejects_undersampled_root() {
+        let params = FocusingParams::default();
+        let claim = claim_from_links(
+            h(0xA1),
+            h(10),
+            vec![Link::stake(h(2), h(1), 8000)],
+            1,
+        );
+        // want=4 grinds only a handful of winning tickets — nowhere near the
+        // k_min ≈ 265 that (ε=0.1, δ=0.01) demands.
+        let policy = TicketPolicy {
+            want: 4,
+            max_attempts: 64,
+            miner: h(10),
+            precision_epsilon: Fx::from_ratio(1, 10),
+            precision_delta: Fx::from_ratio(1, 100),
+            ..TicketPolicy::default()
+        };
+        let err = settle_epoch_tickets(
+            1,
+            &GENESIS_PREV,
+            &base(),
+            &[claim],
+            &Context::none(),
+            &params,
+            1000,
+            &policy,
+        )
+        .unwrap_err();
+        match err {
+            RewardError::InsufficientPrecision { k, k_min } => {
+                assert!(k < k_min);
+                assert!(k_min > 100 && k_min < 400);
+            }
+            other => panic!("expected InsufficientPrecision, got {other:?}"),
+        }
     }
 }

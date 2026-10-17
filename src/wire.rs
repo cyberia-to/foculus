@@ -26,6 +26,10 @@ const TY_CLAIM: u8 = 1;
 const TY_SELF_ACC: u8 = 2;
 const TY_RECEIPT: u8 = 3;
 
+/// Minimum wire bytes one `Link` occupies: neuron(32) + from(32) + to(32) +
+/// amount(16) + valence(1) + price(8).
+const LINK_MIN_BYTES: usize = 32 + 32 + 32 + 16 + 1 + 8;
+
 /// Encode any settle message for radio transport.
 pub fn encode_settle_msg(msg: &SettleMsg) -> Vec<u8> {
     match msg {
@@ -152,7 +156,15 @@ fn decode_claim_body(
     let belief = Fx::from_raw(Goldilocks::new(read_u64(bytes, off)?));
     let prediction = Fx::from_raw(Goldilocks::new(read_u64(bytes, off)?));
     let n = read_u32(bytes, off)? as usize;
-    let mut links = Vec::with_capacity(n);
+    // Not `Vec::with_capacity(n)`: `n` is a wire-supplied u32 read before a
+    // single link byte is checked to exist, so a short or corrupted message
+    // can claim billions of links and drive an allocation sized by a number
+    // the buffer never backs. Every link needs at least LINK_MIN_BYTES on
+    // the wire, so cap the preallocation at what `bytes` could actually
+    // hold; the loop below still rejects a genuinely truncated body
+    // entry-by-entry as before.
+    let max_links = bytes.len().saturating_sub(*off) / LINK_MIN_BYTES;
+    let mut links = Vec::with_capacity(n.min(max_links));
     for _ in 0..n {
         links.push(decode_link(bytes, off)?);
     }
@@ -213,7 +225,11 @@ fn encode_acc_body(out: &mut Vec<u8>, acc: &ClusterAcc) {
 fn decode_acc_body(bytes: &[u8], off: &mut usize) -> Option<ClusterAcc> {
     let k = read_u64(bytes, off)?;
     let n = read_u32(bytes, off)? as usize;
-    let mut sum_m = Vec::with_capacity(n);
+    // Same class as decode_claim_body's `links`: `n` is wire-supplied and
+    // unverified. Each Fx entry needs at least 8 bytes (a u64), so cap the
+    // preallocation at what `bytes` could actually hold.
+    let max_sum_m = bytes.len().saturating_sub(*off) / 8;
+    let mut sum_m = Vec::with_capacity(n.min(max_sum_m));
     for _ in 0..n {
         sum_m.push(Fx::from_raw(Goldilocks::new(read_u64(bytes, off)?)));
     }
@@ -379,4 +395,35 @@ mod tests {
         }
     }
 
+    #[test]
+    fn decode_claim_body_rejects_huge_link_count_without_preallocating() {
+        // belief(8) + prediction(8) + link count declared as u32::MAX, with
+        // not one link byte behind it. Before the fix this drove
+        // `Vec::with_capacity(u32::MAX as usize)` inside decode_settle_msg's
+        // TY_CLAIM path, an allocation abort reachable straight off the
+        // settle-gossip radio wire.
+        let mut body = vec![0u8; 16];
+        body.extend_from_slice(&u32::MAX.to_le_bytes());
+        let mut off = 0usize;
+        assert!(decode_claim_body(&body, &mut off, [0u8; 32], [0u8; 32]).is_none());
+
+        // Same shape via the public entry point, embedded in a full frame.
+        let mut msg = header(TY_CLAIM);
+        msg.extend_from_slice(&[0u8; 32]); // topic
+        msg.extend_from_slice(&[0u8; 32]); // claim_id
+        msg.extend_from_slice(&[0u8; 32]); // neuron
+        msg.extend_from_slice(&body);
+        assert!(decode_settle_msg(&msg).is_none());
+    }
+
+    #[test]
+    fn decode_acc_body_rejects_huge_sum_m_count_without_preallocating() {
+        // k(8) + sum_m count declared as u32::MAX, with not one Fx behind it.
+        // Before the fix this drove `Vec::with_capacity(u32::MAX as usize)`
+        // inside decode_settle_msg's TY_SELF_ACC path.
+        let mut body = vec![0u8; 8];
+        body.extend_from_slice(&u32::MAX.to_le_bytes());
+        let mut off = 0usize;
+        assert!(decode_acc_body(&body, &mut off).is_none());
+    }
 }

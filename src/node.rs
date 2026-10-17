@@ -336,12 +336,13 @@ impl SyncNode {
             );
         }
 
-        Ok(erasure::decode(
+        erasure::decode(
             &available_shards,
             entry.k,
             entry.n,
             entry.original_len,
-        ))
+        )
+        .map_err(|e| anyhow::anyhow!(e))
     }
 
     /// Layer 3+5: sync with peer — verify Merkle root, then merge + fetch.
