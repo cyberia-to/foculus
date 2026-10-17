@@ -61,17 +61,23 @@ pub fn prove(leaves: &[NmtLeaf], namespace: &str) -> CompletenessProof {
     }
 }
 
-/// Verify completeness proof.
+/// Verify completeness proof against a trusted root (from a prior sync or
+/// beacon, not from the proof itself — a proof that supplies its own root
+/// and has that root taken on faith proves nothing about the root).
 ///
-/// The verifier must have the full leaf set to rebuild and compare roots.
-/// For lightweight verification, the verifier only needs to check:
-/// 1. All claimed leaves have the correct namespace.
-/// 2. Claimed leaves form a contiguous sorted run.
-/// 3. The root matches a known-good root (from a trusted source or prior sync).
+/// For lightweight verification, the verifier needs to check:
+/// 1. `proof.root` matches the caller's independently trusted root.
+/// 2. All claimed leaves have the correct namespace.
+/// 3. Claimed leaves form a contiguous sorted run.
 ///
-/// For full verification (when verifier has all leaves):
-/// Use `verify_full` which rebuilds the tree.
-pub fn verify(proof: &CompletenessProof) -> bool {
+/// This still does not prove completeness by itself: a verifier without the
+/// full leaf set cannot detect that a leaf was omitted from the claimed run
+/// (see `nmt_omission_detected`) — only `verify_full`, which rebuilds the
+/// tree from every leaf, closes that gap.
+pub fn verify(proof: &CompletenessProof, trusted_root: &NmtNode) -> bool {
+    if proof.root != *trusted_root {
+        return false;
+    }
     // Basic structural checks.
     for leaf in &proof.leaves {
         if leaf.namespace != proof.namespace {
@@ -93,14 +99,9 @@ pub fn verify(proof: &CompletenessProof) -> bool {
 
 /// Full verification: rebuild tree from all leaves and check root + completeness.
 pub fn verify_full(all_leaves: &[NmtLeaf], proof: &CompletenessProof) -> bool {
-    // Basic checks.
-    if !verify(proof) {
-        return false;
-    }
-
-    // Rebuild tree and check root matches.
+    // Rebuild tree and check root matches, then run the root-bound checks.
     let root = build(all_leaves);
-    if root != proof.root {
+    if !verify(proof, &root) {
         return false;
     }
 
@@ -197,7 +198,7 @@ mod tests {
             leaf("c", "4"), leaf("c", "5"),
         ];
         let proof = prove(&leaves, "b");
-        assert!(verify(&proof));
+        assert!(verify(&proof, &proof.root));
         assert!(verify_full(&leaves, &proof));
         assert_eq!(proof.leaves.len(), 1);
     }
@@ -209,7 +210,7 @@ mod tests {
             leaf("y", "4"),
         ];
         let proof = prove(&leaves, "x");
-        assert!(verify(&proof));
+        assert!(verify(&proof, &proof.root));
         assert!(verify_full(&leaves, &proof));
         assert_eq!(proof.leaves.len(), 3);
     }
@@ -218,7 +219,7 @@ mod tests {
     fn nmt_absence_proof() {
         let leaves = vec![leaf("a", "1"), leaf("c", "2")];
         let proof = prove(&leaves, "b");
-        assert!(verify(&proof));
+        assert!(verify(&proof, &proof.root));
         assert!(verify_full(&leaves, &proof));
         assert_eq!(proof.leaves.len(), 0);
     }
@@ -230,8 +231,10 @@ mod tests {
         ];
         let mut proof = prove(&leaves, "a");
         proof.leaves.pop(); // remove one "a" leaf
-        // verify() still passes (structural check only)
-        // verify_full catches the omission:
+        // verify() against the (untouched) real root still passes: a
+        // verifier without the full leaf set structurally cannot see the
+        // omission. verify_full, which does have every leaf, catches it:
+        assert!(verify(&proof, &proof.root));
         assert!(!verify_full(&leaves, &proof));
     }
 
@@ -240,7 +243,21 @@ mod tests {
         let leaves = vec![leaf("a", "1"), leaf("b", "2")];
         let mut proof = prove(&leaves, "a");
         proof.leaves.push(leaf("b", "2"));
-        assert!(!verify(&proof)); // wrong namespace detected
+        assert!(!verify(&proof, &proof.root)); // wrong namespace detected
+    }
+
+    #[test]
+    fn nmt_verify_rejects_forged_root() {
+        // Before this fix, verify() never read proof.root at all: a proof
+        // carrying a root nobody derived from real leaves still passed as
+        // long as its own leaves were internally sorted and same-namespace.
+        let leaves = vec![leaf("a", "1"), leaf("b", "2"), leaf("c", "3")];
+        let proof = prove(&leaves, "b");
+        let forged_root = build(&[leaf("z", "does-not-exist")]);
+        assert_ne!(proof.root, forged_root);
+        assert!(!verify(&proof, &forged_root));
+        // The real, independently-known root still passes.
+        assert!(verify(&proof, &proof.root));
     }
 
     #[test]

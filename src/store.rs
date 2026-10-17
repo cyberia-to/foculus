@@ -137,7 +137,7 @@ impl ChunkStore {
         let hex = hash.to_hex();
 
         let size = bytes.len() as u64;
-        if self.capacity > 0 && self.used + size > self.capacity {
+        if self.capacity > 0 && self.used.saturating_add(size) > self.capacity {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Other,
                 "chunk store capacity exceeded",
@@ -147,7 +147,7 @@ impl ChunkStore {
         let path = self.root.join(&hex);
         if !path.exists() {
             std::fs::write(&path, &bytes)?;
-            self.used += size;
+            self.used = self.used.saturating_add(size);
         }
         self.index.insert(hex, bytes);
         Ok(hash)
@@ -488,6 +488,36 @@ mod tests {
         let retrieved = store.get(&hash).unwrap();
         let expected = shard_to_bytes(&shards[0]);
         assert_eq!(retrieved, expected);
+    }
+
+    #[test]
+    fn used_saturates_instead_of_overflowing_in_unlimited_mode() {
+        // capacity = 0 is the "unlimited" convention this test file already
+        // exercises in store_and_retrieve — the capacity guard is skipped
+        // entirely in that mode, so `used` must not overflow on its own.
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = ChunkStore::new(dir.path(), 0).unwrap();
+        store.used = u64::MAX - 5;
+        let data = b"chunk store overflow test data";
+        let shards = erasure::encode(data, 2, 4);
+        // this shard's encoded size is well over 5 bytes, so a bare `+=`
+        // would panic (debug) or wrap (release) instead of saturating.
+        store.put(&shards[0]).unwrap();
+        assert_eq!(store.used, u64::MAX);
+    }
+
+    #[test]
+    fn capacity_check_saturates_instead_of_overflowing() {
+        // capacity > 0 but used is already near u64::MAX: the guard's own
+        // `used + size` must not overflow while deciding to reject.
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = ChunkStore::new(dir.path(), 100).unwrap();
+        store.used = u64::MAX - 5;
+        let data = b"chunk store capacity overflow test data";
+        let shards = erasure::encode(data, 2, 4);
+        assert!(store.put(&shards[0]).is_err());
+        // rejected, so used is unchanged
+        assert_eq!(store.used, u64::MAX - 5);
     }
 
     #[test]

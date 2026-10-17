@@ -47,7 +47,7 @@ fn cluster(n: usize) -> Vec<Contribution> {
 #[test]
 fn absorb_ticket_cost_grows_with_accumulator_size() {
     let n_contrib = 8;
-    let k_min = ClusterAcc::k_min(0.1, 0.01) as usize; // ~265
+    let k_min = ClusterAcc::k_min(Fx::from_ratio(1, 10), Fx::from_ratio(1, 100)) as usize; // ~265
     let pool = grind_settlement(
         &base(),
         &cluster(n_contrib),
@@ -117,7 +117,7 @@ fn absorb_ticket_cost_grows_with_accumulator_size() {
 #[test]
 fn fold_acc_cost_at_k_min_sized_accumulators() {
     let n_contrib = 8;
-    let k_min = ClusterAcc::k_min(0.1, 0.01) as usize; // ~265
+    let k_min = ClusterAcc::k_min(Fx::from_ratio(1, 10), Fx::from_ratio(1, 100)) as usize; // ~265
     let half = k_min / 2;
 
     let left_pool = grind_settlement(
