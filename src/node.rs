@@ -13,8 +13,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use iroh::address_lookup::MdnsAddressLookup;
+use iroh::address_lookup::memory::MemoryLookup;
 use iroh::endpoint::Connection;
+use iroh::endpoint::presets::Minimal;
 use iroh::protocol::{AcceptError, ProtocolHandler, Router};
 use iroh::{Endpoint, EndpointId, RelayMode, SecretKey};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -22,6 +23,8 @@ use tokio::sync::RwLock;
 
 use crate::das;
 use crate::erasure;
+use crate::node_util::format_bytes;
+use crate::placement::capacity_weighted_placement;
 use crate::store::{self, FileEntry, GSet};
 
 /// Wire protocol message types.
@@ -110,17 +113,20 @@ impl SyncNode {
             let bytes32: [u8; 32] = bytes.try_into().map_err(|_| anyhow::anyhow!("bad key file"))?;
             SecretKey::from(bytes32)
         } else {
-            let key = SecretKey::generate(&mut rand::rng());
+            let key = SecretKey::generate();
             std::fs::write(&key_path, key.to_bytes())?;
             key
         };
 
-        // Create iroh endpoint with mDNS discovery and fixed port.
+        // iroh 1.x dropped `address-lookup-mdns` (no automatic local-network discovery
+        // upstream any more); peers are already dialed below by their known `EndpointAddr`
+        // (parsed from `peers.json`), so an empty `MemoryLookup` is a correct peer-address
+        // book here, not a discovery stand-in.
         let bind_addr = std::net::SocketAddrV4::new(std::net::Ipv4Addr::UNSPECIFIED, port);
-        let endpoint = Endpoint::builder()
+        let endpoint = Endpoint::builder(Minimal)
             .relay_mode(RelayMode::Disabled)
             .secret_key(secret_key)
-            .address_lookup(MdnsAddressLookup::builder())
+            .address_lookup(MemoryLookup::default())
             .bind_addr(bind_addr)
             .context("invalid bind addr")?
             .bind()
@@ -561,13 +567,7 @@ impl SyncNode {
     /// Compute deterministic (k, n) from the number of alive peers.
     /// All nodes using the same algorithm + same device set = same result.
     pub fn compute_params(alive_devices: usize, redundancy_f: usize) -> (usize, usize) {
-        if alive_devices < 2 {
-            return (1, 1);
-        }
-        let n = alive_devices.min(8).next_power_of_two();
-        let f = redundancy_f.min(n - 1);
-        let k = n - f;
-        (k, n)
+        crate::node_util::compute_params(alive_devices, redundancy_f)
     }
 
     pub async fn status(&self) -> (usize, usize, usize, usize) {
@@ -671,42 +671,6 @@ async fn background_sync(state: &Arc<RwLock<SharedState>>, ep: &Endpoint) -> Res
     Ok(())
 }
 
-// ── Capacity-weighted placement ──
-
-fn capacity_weighted_placement(n_shards: usize, peer_capacities: &[u64]) -> Vec<usize> {
-    let n_devices = peer_capacities.len() + 1;
-    if n_devices == 0 || n_shards == 0 {
-        return vec![0; n_shards];
-    }
-    let mut caps: Vec<u64> = Vec::with_capacity(n_devices);
-    caps.push(u64::MAX);
-    caps.extend_from_slice(peer_capacities);
-    let total_cap: u128 = caps.iter().map(|&c| c.max(1) as u128).sum();
-    let mut alloc = vec![0usize; n_devices];
-    let mut assigned = 0;
-    for d in 0..n_devices {
-        let share = (n_shards as u128 * caps[d].max(1) as u128 / total_cap) as usize;
-        alloc[d] = share;
-        assigned += share;
-    }
-    let mut remainder = n_shards.saturating_sub(assigned);
-    let mut order: Vec<usize> = (0..n_devices).collect();
-    order.sort_by(|&a, &b| caps[b].cmp(&caps[a]));
-    for &d in &order {
-        if remainder == 0 { break; }
-        alloc[d] += 1;
-        remainder -= 1;
-    }
-    let mut placement = Vec::with_capacity(n_shards);
-    for (device_idx, &count) in alloc.iter().enumerate() {
-        for _ in 0..count {
-            placement.push(device_idx);
-        }
-    }
-    placement.truncate(n_shards);
-    placement
-}
-
 fn save_peers(state: &SharedState) -> Result<()> {
     std::fs::write(
         state.data_dir.join("peers.json"),
@@ -717,15 +681,6 @@ fn save_peers(state: &SharedState) -> Result<()> {
         serde_json::to_string_pretty(&state.peer_capacities)?,
     )?;
     Ok(())
-}
-
-fn format_bytes(bytes: u64) -> String {
-    if bytes == 0 { return "unlimited".to_string(); }
-    const GB: u64 = 1_000_000_000;
-    const MB: u64 = 1_000_000;
-    if bytes >= GB { format!("{:.1} GB", bytes as f64 / GB as f64) }
-    else if bytes >= MB { format!("{:.1} MB", bytes as f64 / MB as f64) }
-    else { format!("{} B", bytes) }
 }
 
 // ── Server: handle incoming connections ──
