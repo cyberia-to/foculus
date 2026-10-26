@@ -14,10 +14,20 @@ readme = "README.md"
 [[bin]]
 name = "foculus"
 path = "src/bin/main.rs"
+required-features = ["legacy-proofs"]
 
 [features]
 default = []
 net = ["dep:iroh", "dep:tokio", "dep:tracing-subscriber"]
+# The retired 0.3.x folded trace API: commit/open/verify_eval/verify/fold/
+# decide, the universal CCS (`ccs`), the legacy fold (`folding`) and phi
+# SpMV. UNSOUND (fold unchecked, statement unbound — specs/decider.md); kept
+# off by default so external consumers can migrate. Never enable it on a
+# production path.
+# (zheng's warning, verbatim.) The pay/ticket/step/tip/epoch-cert modules and
+# everything that depends on them are built on that API, so they are off by
+# default: no production consumer should enable zheng/legacy.
+legacy-proofs = ["zheng/legacy"]
 
 [dependencies]
 nebu = { package = "strata-nebu", version = "0.1", path = "../strata/nebu/rs" }

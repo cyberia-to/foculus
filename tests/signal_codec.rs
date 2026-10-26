@@ -256,6 +256,7 @@ fn proof_identity_binds_proof_bytes_independently_of_signal_fields() {
     assert_ne!(proof_hash(&signal).unwrap(), original);
 }
 
+#[cfg(feature = "legacy-proofs")]
 #[test]
 fn a_real_zheng_pay_proof_verifies_after_signal_roundtrip() {
     let statement = foculus::PayStatement {
