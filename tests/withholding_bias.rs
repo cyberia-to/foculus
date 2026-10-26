@@ -9,7 +9,14 @@
 //! has a simulated adversary controlling a fraction `q` of that pool
 //! withhold every sample below the pool's true mean, and checks the
 //! resulting bias against the analytic worst-case bound derived in
-//! specs/fold-mining.md: `bias(q) <= (mean - min) * q / (1 - q)`.
+//! specs/fold-mining.md: `bias <= (mean - min) * |A| / (T - |A|)`, with |A|
+//! the withholder's tickets in the pool of T. the derivation's |D| <= |A|
+//! (withheld tickets are a subset of assigned ones) makes this exact for
+//! every pool. nominal `q` only sets |A| ~ qT in expectation, and asserting
+//! at nominal `q` made the test depend on the drawn pool: diagnostic run
+//! 40358498794 (32 beacons x 4 values of q) failed the nominal bound in 4/128
+//! runs on hemera 0.3.1 and 8/128 on hemera 0.4.0, every one with |A|/T > q,
+//! and the realized bound in 0/256.
 
 use foculus::settlement::Contribution;
 use foculus::tickets::{grind_settlement, self_fold, SettlementTicket};
@@ -106,20 +113,33 @@ fn withholding_bias_is_bounded_by_compute_share() {
     for &q in &[0.05, 0.1, 0.25, 0.5] {
         let biased = biased_share(&tickets, true_mean, q);
         let bias = biased - true_mean;
-        let bound = range * Fx::from_ratio((q * 1000.0) as i64, (1000.0 * (1.0 - q)) as i64);
+        let assigned = tickets.iter().filter(|t| assign_to_adversary(t.nonce, q)).count();
+        assert!(
+            assigned > 0 && assigned < tickets.len(),
+            "degenerate assignment at q={q}: {assigned} of {} tickets assigned to the withholder",
+            tickets.len()
+        );
+        // the bound at the realized share |A|/T, which the derivation's
+        // |D| <= |A| makes exact; nominal q is printed for reference only.
+        let bound = range * Fx::from_ratio(assigned as i64, (tickets.len() - assigned) as i64);
+        let nominal = range * Fx::from_ratio((q * 1000.0) as i64, (1000.0 * (1.0 - q)) as i64);
 
         eprintln!(
-            "[withholding-bias] q={q:.2} bias={:.6} bound={:.6}",
+            "[withholding-bias] q={q:.2} share={:.4} bias={:.6} bound={:.6} nominal={:.6}",
+            assigned as f64 / tickets.len() as f64,
             bias.to_f64(),
-            bound.to_f64()
+            bound.to_f64(),
+            nominal.to_f64()
         );
 
         assert!(bias >= Fx::ZERO, "withholding below-mean samples must not lower the adversary's own apparent share (q={q})");
         assert!(
             bias <= bound,
-            "bias {:.6} exceeds the analytic bound {:.6} at q={q} — injectable bias is not bounded by compute share",
+            "bias {:.6} exceeds the analytic bound {:.6} at the realized share {}/{} (q={q}) — injectable bias is not bounded by compute share",
             bias.to_f64(),
-            bound.to_f64()
+            bound.to_f64(),
+            assigned,
+            tickets.len()
         );
         assert!(
             bias >= prev_bias,
