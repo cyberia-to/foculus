@@ -3,7 +3,7 @@
 // crystal-type: source
 // crystal-domain: cyber
 // ---
-//! Tip service — clock C (history trust) for full / cell / light modes.
+//! Tip service — clock C (history trust) for full / partial / light modes.
 //!
 //! Normative: cyber/specs/light-money.md, money-loop.md.
 //!
@@ -23,7 +23,7 @@ use crate::step;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum TipTrust {
-    /// Full node or cell: history applied locally.
+    /// Full node or partial node: history applied locally.
     LocalApplied = 1,
     /// Light client: folding accumulator decided / maintained.
     FoldDecided = 2,

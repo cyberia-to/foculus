@@ -172,7 +172,7 @@ struct PeerState {
     subs: BTreeSet<Topic>,
 }
 
-/// In-process epidemic mesh for multi-miner settle tests and cell-local swarm.
+/// In-process epidemic mesh for multi-miner settle tests and local swarm of partial nodes.
 pub struct SettleMesh {
     peers: BTreeMap<[u8; 32], PeerState>,
     fanout: usize,
