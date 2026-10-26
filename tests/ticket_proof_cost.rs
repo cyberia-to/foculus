@@ -1,3 +1,4 @@
+#![cfg(feature = "legacy-proofs")]
 //! Property #3 (cyber/launch.md): ticket proof cost < ticket reward.
 //!
 //! specs/fold-mining.md claims the root decider is O(1): ~825 constraints,

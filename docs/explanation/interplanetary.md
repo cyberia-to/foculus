@@ -12,7 +12,7 @@ most consensus works like a committee that votes. someone proposes, everyone rai
 
 ## the pond
 
-picture a pond. each [[neuron]] drops a pebble -- a [[signal]], a [[cyberlink]] staked between two [[particles]]. rings spread. and here is the whole trick: given the same pebbles, the final shape of the water surface is the same wherever you stand. you never phone the far shore to agree on the water level. physics does it for you.
+picture a pond. each [[neuron]] drops a pebble -- a [[signal]], a [[cyberlink]] staked between two [[files]]. rings spread. and here is the whole trick: given the same pebbles, the final shape of the water surface is the same wherever you stand. you never phone the far shore to agree on the water level. physics does it for you.
 
 every node just whispers to its neighbors what it saw ([[gossip]]) and quietly runs the same arithmetic over the rumors it holds (the [[tri-kernel]], computing the attention distribution [[focus|$\phi^*$]]). the operator is a contraction, so every node applying the same rule to the same signals slides toward one and the same fixed point. agreement is computed independently and comes out identical -- like everyone solving one equation reaching one root. a [[particle]] is final when enough attention mass has gathered on it: $\phi^*_i > \tau$. nobody announces this. each node sees it cross locally.
 
@@ -24,7 +24,7 @@ with no vote to collect, no node sits idle for 40 minutes awaiting a reply. you 
 
 ### each planet is its own pond
 
-Martian chatter is mostly about Martian things; it settles among Martian nodes at Martian speed. Earth settles at Earth speed. this is the [[reward specification|$\varepsilon$-support]] domain made physical: no neuron ever needs a complete view of the [[cybergraph]], and finality is established relative to a conflict's own local domain, not the whole planetary graph. Mars does not wait on Earth to live. the interplanetary delay is paid only when both worlds speak about the same particle -- a shared contract, a shared fact. then the two ponds reconcile their levels, and that reconciliation costs light-time, but only for that shared item, in a bounded number of cross-domain rounds (see [[foculus security at scale]] S4), after which it is settled forever.
+Martian chatter is mostly about Martian things; it settles among Martian nodes at Martian speed. Earth settles at Earth speed. this is the [[reward specification|$\varepsilon$-support]] domain made physical: no neuron ever needs a complete view of the [[cybergraph]], and finality is established relative to a conflict's own local domain, not the whole planetary graph. Mars does not wait on Earth to live. the interplanetary delay is paid only when both worlds speak about the same file -- a shared contract, a shared fact. then the two ponds reconcile their levels, and that reconciliation costs light-time, but only for that shared item, in a bounded number of cross-domain rounds (see [[foculus security at scale]] S4), after which it is settled forever.
 
 ### a broken link breaks nothing
 
@@ -36,7 +36,7 @@ Nakamoto says wait six blocks, about an hour. that stopwatch is meaningless when
 
 ## a signal walked Earth to Mars
 
-a Martian links two [[particles]] -- a pebble into the Martian pond. rings spread through Martian nodes; in seconds to minutes the Martian $\phi^*$ converges and the fact is final on Mars. Earth has not yet heard it, and that is correct -- the fact is Martian.
+a Martian links two [[files]] -- a pebble into the Martian pond. rings spread through Martian nodes; in seconds to minutes the Martian $\phi^*$ converges and the fact is final on Mars. Earth has not yet heard it, and that is correct -- the fact is Martian.
 
 a copy travels to Earth over 4 to 24 minutes, store-and-forward, the delay-tolerant regime deep space already runs. signals commute, so out-of-order and delayed delivery still converge to identical [[state]] -- this is [[vec|verified eventual consistency]]. Earth pours the signal into its pond. absent any Earthly conflict, it is absorbed. where it collides with an Earthly claim -- a contest over one resource -- the cross-domain rounds engage: the two ponds exchange levels, each round about one light-delay, a bounded number of times (S4's boundary-conflict bound), then fixed for good. expensive in hours, yet pure speed-of-light physics, paid only for a genuinely shared dispute, once.
 

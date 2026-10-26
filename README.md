@@ -12,6 +12,7 @@ implementable, normative — what a builder implements against:
 - [gossip.md](specs/gossip.md) — the propagation layer VEC P4 assumes: no message envelope, a signal *is* the gossip message; push for new signals, pull for VEC P2 completeness proofs. topology starts with explicit domain subscription (proven, gossipsub-style, via radio); graph-inferred peer affinity is named as a future direction, not the starting design — see the document's own opening for why
 - [provable-consensus.md](specs/provable-consensus.md) — circuit spec: proving φ* in a [[zheng]] circuit, cost analysis, recursive composition
 - [vec.md](specs/vec.md) — verified eventual consistency: six properties (P1-P6), CRDT safety, NMT completeness, DAS availability
+- [signal-codec.md](specs/signal-codec.md) — bounded complete Signal encoding, authenticated proof identity, and strict legacy log import
 - [beacon.md](specs/beacon.md) — epoch randomness beacon $b_E$: VDF over finalized signals; unpredictable, unbiasable, verifiable, live
 - [fold-mining.md](specs/fold-mining.md) — second lottery: HyperNova fold tree aggregates settlement tickets into one O(1) accumulator per cluster; closes settlement liveness
 - [security-at-scale.md](specs/security-at-scale.md) — the derivation record for `protocol.md`'s amendments: safety and liveness at $N \to 10^{15}$, localized to reward specification's ε-support domains (L1, L2), the support-switching rule and its proof (T1), the spectral gap as a conditional theorem (T2), corrected domain/shard composition (S4) and liveness (S5)
@@ -29,7 +30,7 @@ narrative, not normative:
 - [overview.md](docs/explanation/overview.md) — what is foculus, consensus as equilibrium, finality as point of no return
 - [convergence.md](docs/explanation/convergence.md) — convergence theory: fixed points, contraction, spectral gap, five worked examples
 - [life-of-a-signal.md](docs/explanation/life-of-a-signal.md) — a signal's full lifecycle walked in real time: gossip and tri-kernel convergence to finality (~4s), then the epoch pipeline — beacon, settlement lottery, fold, mint — to a spendable Shapley share (~1-3min); includes who computes the beacon, a tuned-vs-conservative timing table, and three open scheduling tensions
-- [latency-targets.md](docs/explanation/latency-targets.md) — architectural map of the three clocks (transfer finality, attribution settlement, light-client history trust): full node / cell / light client all in scope; light path = decide(acc) + fold + Lens openings; who owns each clock; latency targets and certainty grades for send/receive/reward-after-link
+- [latency-targets.md](docs/explanation/latency-targets.md) — architectural map of the three clocks (transfer finality, attribution settlement, light-client history trust): full node / partial / light client all in scope; light path = decide(acc) + fold + Lens openings; who owns each clock; latency targets and certainty grades for send/receive/reward-after-link
 - [interplanetary.md](docs/explanation/interplanetary.md) — why foculus survives light-minutes where voting protocols cannot: the pond metaphor, four consequences (no round-trip, per-planet domains, partition-safety, information-not-clock finality), an Earth↔Mars signal walk, and the honest scope of the bounded cross-domain latency cost
 
 ## roadmap

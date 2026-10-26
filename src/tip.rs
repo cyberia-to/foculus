@@ -3,7 +3,7 @@
 // crystal-type: source
 // crystal-domain: cyber
 // ---
-//! Tip service — clock C (history trust) for full / cell / light modes.
+//! Tip service — clock C (history trust) for full / partial / light modes.
 //!
 //! Normative: cyber/specs/light-money.md, money-loop.md.
 //!
@@ -23,7 +23,7 @@ use crate::step;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum TipTrust {
-    /// Full node or cell: history applied locally.
+    /// Full node or partial node: history applied locally.
     LocalApplied = 1,
     /// Light client: folding accumulator decided / maintained.
     FoldDecided = 2,
@@ -50,7 +50,7 @@ impl Tip {
         Self {
             height: checkpoint.height,
             root: checkpoint.root,
-            folding_acc: checkpoint.acc.clone(),
+            folding_acc: None,
             trust: TipTrust::LocalApplied,
             statement: None,
         }
@@ -67,10 +67,11 @@ impl Tip {
     }
 
     /// Light join: require non-empty acc + decide + verify → FoldDecided.
-    pub fn join_checkpoint(checkpoint: &Checkpoint) -> Self {
-        let Some(acc) = checkpoint.acc.as_ref() else {
-            return Self::untrusted_at(checkpoint);
-        };
+    ///
+    /// The accumulator travels beside the checkpoint, not inside it: bbg 0.3's
+    /// `Checkpoint` proof slot is opaque and zheng's legacy accumulator has no
+    /// wire form.
+    pub fn join_checkpoint(checkpoint: &Checkpoint, acc: &Accumulator) -> Self {
         if acc.step_count() == 0 {
             return Self::untrusted_at(checkpoint);
         }
@@ -96,7 +97,7 @@ impl Tip {
         Self {
             height: checkpoint.height,
             root: checkpoint.root,
-            folding_acc: checkpoint.acc.clone(),
+            folding_acc: None,
             trust: TipTrust::Untrusted,
             statement: None,
         }
@@ -105,9 +106,6 @@ impl Tip {
     pub fn advance_local(&mut self, checkpoint: &Checkpoint) {
         self.height = checkpoint.height;
         self.root = checkpoint.root;
-        if checkpoint.acc.is_some() {
-            self.folding_acc = checkpoint.acc.clone();
-        }
         self.trust = TipTrust::LocalApplied;
     }
 
@@ -153,7 +151,9 @@ impl Tip {
     pub fn to_checkpoint(&self) -> Checkpoint {
         Checkpoint {
             root: self.root,
-            acc: self.folding_acc.clone(),
+            // the legacy accumulator is not a bbg CheckpointProof profile;
+            // read `folding_acc` for it
+            acc: None,
             height: self.height,
         }
     }
@@ -230,15 +230,19 @@ impl TipProver {
     pub fn checkpoint(&self) -> Checkpoint {
         Checkpoint {
             root: self.root,
-            acc: Some(self.acc.clone()),
+            acc: None,
             height: self.height,
         }
+    }
+
+    pub fn accumulator(&self) -> &Accumulator {
+        &self.acc
     }
 
     /// Decide + package a light-joinable tip.
     pub fn seal_tip(&self) -> Result<Tip, TipError> {
         let ck = self.checkpoint();
-        let tip = Tip::join_checkpoint(&ck);
+        let tip = Tip::join_checkpoint(&ck, &self.acc);
         if !tip.grade4() {
             return Err(TipError::VerifyFailed);
         }
@@ -306,7 +310,7 @@ mod tests {
             acc: None,
             height: 1,
         };
-        assert!(!Tip::join_checkpoint(&ck).grade4());
+        assert!(!Tip::join_checkpoint(&ck, &step::blank_acc()).grade4());
     }
 
     #[test]
@@ -352,7 +356,7 @@ mod tests {
         prover.fold_height(4, [5u8; 32]).unwrap();
         let mut ck = prover.checkpoint();
         ck.root = [6u8; 32];
-        let tip = Tip::join_checkpoint(&ck);
+        let tip = Tip::join_checkpoint(&ck, prover.accumulator());
         assert_eq!(tip.trust, TipTrust::FoldDecided);
     }
 }
