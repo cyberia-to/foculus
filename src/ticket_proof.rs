@@ -180,6 +180,7 @@ impl TicketRelation<'_> {
     /// disclosed coalition values, strictly increasing. Every column the
     /// relation reads is pinned: the values are public because the native
     /// impulse check reads them (no CCS for impulse exists yet).
+    #[cfg(feature = "accumulated-settlement")]
     pub(crate) fn disclosed_pins(&self, values: &[F]) -> Vec<(usize, F)> {
         let mut pins = vec![(0, F::ONE)];
         pins.extend(self.public());
