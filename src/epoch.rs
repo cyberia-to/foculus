@@ -3,29 +3,24 @@
 // crystal-type: source
 // crystal-domain: cyber
 // ---
-//! Live epoch runner: propose → freeze → outer VDF beacon → ticket settle + HyperNova σ.
+//! Live epoch runner: propose → freeze → outer VDF beacon → proven ticket settle.
 //!
 //! This is the product path that actually runs (not a virtual sketch):
 //! ```text
 //! propose_claim* → freeze → open_beacon(signal VDFs, T)
-//!   → grind tickets → prove_settlement_batch (σ)
-//!   → self_fold / prove_fold_tree (σ)
-//!   → SettleReceipt { fold_seal, beacon_artifact }
+//!   → grind tickets → prove each (ticket_proof)
+//!   → redraw peer self-accumulators → verify the cluster (cluster)
+//!   → SettleReceipt { settlement, beacon_artifact }
 //! ```
 
-use tru::{impulse, Context, FocusingParams, Link};
+use tru::{Context, FocusingParams, Link};
 
 use crate::beacon::{
     self, claims_root, open_beacon, verify_beacon, BeaconArtifact, GENESIS_PREV, TEST_OUTER_T,
 };
-use crate::partition::{partition_into_clusters, Adjacency};
-use crate::rewards::{
-    allocate_budget_pub, contributions_with_rho, receipt_hash_pub, RewardClaim, RewardError,
-    SettleReceipt, TicketPolicy,
-};
-use crate::marginal_cert::prove_replayed_batch;
-use crate::ticket_proof::{prove_fold_tree, verify_fold_seal, ProofError};
-use crate::tickets::{grind_settlement, self_fold, ClusterAcc};
+use crate::rewards::{RewardClaim, RewardError, SettleReceipt, TicketPolicy};
+use crate::settle_tickets::{ClaimSet, ticket_receipt};
+use crate::tickets::ClusterAcc;
 use crate::vdf::VdfProof;
 
 /// Epoch lifecycle phase.
@@ -79,23 +74,6 @@ impl EpochRunner {
         &self.claims
     }
 
-    /// The canonical partition of the epoch's claims into clusters
-    /// ([[reward specification]] §7, `partition::partition_into_clusters`):
-    /// connected components of overlapping ε-supports over `adjacency`, at
-    /// the given radius. Available in any phase once claims exist — freezing
-    /// only fixes `claims_root`, it does not fix the partition.
-    ///
-    /// `settle`/`settle_with_peers` do not dispatch per cluster yet: every
-    /// claim in the epoch still settles through one shared
-    /// `grind_settlement` call, so this partition is not yet load-bearing on
-    /// the settlement path. It makes the canonical grouping computable and
-    /// testable at the runner level; splitting `settle_with_peers` to run
-    /// once per cluster (each with its own ticket batch and fold tree) is
-    /// the next slice.
-    pub fn clusters(&self, adjacency: &Adjacency, radius: usize) -> Vec<Vec<usize>> {
-        partition_into_clusters(&self.claims, adjacency, radius)
-    }
-
     /// Propose window: add a claim. Fails after freeze.
     pub fn propose(&mut self, claim: RewardClaim) -> Result<(), EpochError> {
         if self.phase != EpochPhase::Propose {
@@ -147,7 +125,7 @@ impl EpochRunner {
         self.open_beacon(&[])
     }
 
-    /// Settle with ticket grind + HyperNova σ (solo: no peer SelfAccs).
+    /// Settle with proven ticket grind (solo: no peer SelfAccs).
     pub fn settle(
         &mut self,
         base: &[Link],
@@ -158,8 +136,8 @@ impl EpochRunner {
         self.settle_with_peers(base, ctx, params, policy, &[])
     }
 
-    /// Settle using **existing** beacon, folding local grind + peer SelfAcc leaves.
-    /// Leaderless multi-miner path: peers mine SelfAcc under shared b_E, coordinator folds.
+    /// Settle using the **existing** beacon: local tickets plus the tickets
+    /// peer SelfAccs name, each redrawn and proven; peers that lie are dropped.
     pub fn settle_with_peers(
         &mut self,
         base: &[Link],
@@ -178,71 +156,21 @@ impl EpochRunner {
         if !verify_beacon(art) {
             return Err(EpochError::BeaconInvalid);
         }
-        let b_e = art.beacon;
-        let cr = art.claims_root;
-        let contribs = contributions_with_rho(&self.claims);
-        let all_links: Vec<Link> = self.claims.iter().flat_map(|c| c.links.clone()).collect();
-        let directed_total = impulse(base, &all_links, ctx, params, params.epsilon).directed;
-
-        let tickets = grind_settlement(
-            base,
-            &contribs,
-            ctx,
-            params,
-            &b_e,
-            &cr,
-            &policy.miner,
-            policy.start_nonce,
-            policy.max_attempts,
-            policy.want,
-            policy.settle_target,
-        );
-        let local = self_fold(contribs.len(), &tickets);
-        let mut leaves = vec![local];
-        leaves.extend(peer_accs.iter().cloned());
-        if leaves.iter().all(|a| a.k == 0) {
-            return Err(EpochError::NoTickets);
-        }
-        // Seal only after replaying Δφ⁺ marginals for every ticket.
-        let ticket_seal = if !tickets.is_empty() {
-            Some(
-                prove_replayed_batch(base, &contribs, ctx, params, &b_e, &cr, &tickets).map_err(
-                    |e| match e {
-                        crate::marginal_cert::CertError::ReplayFailed => EpochError::NoTickets,
-                        crate::marginal_cert::CertError::Proof(p) => EpochError::Proof(p),
-                    },
-                )?,
-            )
-        } else {
-            None
-        };
-        let (root, fold_seal) = prove_fold_tree(&b_e, &cr, &leaves).map_err(EpochError::Proof)?;
-        if !verify_fold_seal(&fold_seal) {
-            return Err(EpochError::Proof(ProofError::VerifyFailed));
-        }
-        if !root.meets_precision(policy.precision_epsilon, policy.precision_delta) {
-            return Err(EpochError::InsufficientPrecision {
-                k: root.k,
-                k_min: ClusterAcc::k_min(policy.precision_epsilon, policy.precision_delta),
-            });
-        }
-        let neurons: Vec<[u8; 32]> = contribs.iter().map(|c| c.neuron).collect();
-        let raw_shares = root.mean_shares(&neurons);
-        let shares = allocate_budget_pub(&raw_shares, self.budget, directed_total)
-            .map_err(EpochError::Reward)?;
-        let receipt = SettleReceipt {
-            epoch: self.epoch,
-            beacon: b_e,
-            claims_root: cr,
-            receipt_hash: receipt_hash_pub(self.epoch, &b_e, &shares),
-            directed_total,
-            budget: self.budget,
-            shares,
-            beacon_artifact: Some(art.clone()),
-            ticket_seal,
-            fold_seal: Some(fold_seal),
-            sample_count: root.k,
-        };
+        let set = ClaimSet { base, claims: &self.claims, ctx, params };
+        let mut receipt = ticket_receipt(
+            self.epoch,
+            &art.beacon,
+            &art.claims_root,
+            set,
+            self.budget,
+            policy,
+            peer_accs,
+        )
+        .map_err(|e| match e {
+            RewardError::NoTickets => EpochError::NoTickets,
+            other => EpochError::Reward(other),
+        })?;
+        receipt.beacon_artifact = Some(art.clone());
         self.receipt = Some(receipt);
         self.phase = EpochPhase::Settled;
         Ok(self.receipt.as_ref().unwrap())
@@ -276,33 +204,17 @@ impl EpochRunner {
     }
 }
 
-/// Verify a receipt produced by the live epoch path (beacon VDF + seals + hash).
+/// Structural check of a live-path receipt: beacon VDF, hash binding and a
+/// ticket set. Marginal correctness needs the claims and base graph — see
+/// [`crate::settle_tickets::verify_settlement`].
 pub fn verify_live_receipt(receipt: &SettleReceipt) -> bool {
-    if !crate::rewards::verify_receipt(receipt) {
+    let Some(art) = &receipt.beacon_artifact else {
         return false;
-    }
-    if let Some(art) = &receipt.beacon_artifact {
-        if !verify_beacon(art) || art.beacon != receipt.beacon {
-            return false;
-        }
-    } else {
-        return false;
-    }
-    if let Some(seal) = &receipt.ticket_seal {
-        if !verify_fold_seal(seal) {
-            return false;
-        }
-    } else {
-        return false;
-    }
-    if let Some(seal) = &receipt.fold_seal {
-        if !verify_fold_seal(seal) {
-            return false;
-        }
-    } else {
-        return false;
-    }
-    true
+    };
+    verify_beacon(art)
+        && art.beacon == receipt.beacon
+        && receipt.settlement.is_some()
+        && crate::rewards::verify_receipt(receipt)
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -314,12 +226,7 @@ pub enum EpochError {
     BeaconInvalid,
     BudgetZero,
     NoTickets,
-    Proof(ProofError),
     Reward(RewardError),
-    /// Root accumulator's sample count k is below the Hoeffding minimum for
-    /// the policy's (precision_epsilon, precision_delta): the MC estimate is
-    /// not yet trustworthy enough to mint against.
-    InsufficientPrecision { k: u64, k_min: u64 },
 }
 
 #[cfg(test)]
@@ -327,7 +234,7 @@ mod tests {
     use super::*;
     use crate::rewards::claim_from_links;
     use crate::vdf;
-    use tru::{Fx, Link};
+    use tru::Link;
 
     fn h(b: u8) -> [u8; 32] {
         let mut x = [0u8; 32];
@@ -380,47 +287,8 @@ mod tests {
         assert!(verify_live_receipt(rec));
         assert_eq!(rec.budget, 500);
         assert!(rec.sample_count >= 4);
-        assert!(rec.ticket_seal.is_some());
-        assert!(rec.fold_seal.is_some());
+        assert_eq!(rec.settlement.as_ref().unwrap().tickets.len() as u64, rec.sample_count);
         assert!(rec.beacon_artifact.is_some());
-    }
-
-    #[test]
-    fn tight_precision_gate_rejects_undersampled_root() {
-        let mut runner = EpochRunner::genesis(1);
-        runner.budget = 500;
-        runner.outer_t = TEST_OUTER_T;
-        runner
-            .propose(claim_from_links(
-                h(0xA1),
-                h(10),
-                vec![Link::stake(h(2), h(1), 8000)],
-                1,
-            ))
-            .unwrap();
-        runner.freeze().unwrap();
-        runner.open_quiet_beacon().unwrap();
-
-        // want=4 grinds only a handful of winning tickets — nowhere near the
-        // k_min ≈ 265 that (ε=0.1, δ=0.01) demands.
-        let policy = TicketPolicy {
-            want: 4,
-            max_attempts: 64,
-            miner: h(10),
-            precision_epsilon: Fx::from_ratio(1, 10),
-            precision_delta: Fx::from_ratio(1, 100),
-            ..TicketPolicy::default()
-        };
-        let err = runner
-            .settle(&base(), &Context::none(), &FocusingParams::default(), &policy)
-            .unwrap_err();
-        match err {
-            EpochError::InsufficientPrecision { k, k_min } => {
-                assert!(k < k_min);
-                assert!(k_min > 100 && k_min < 400);
-            }
-            other => panic!("expected InsufficientPrecision, got {other:?}"),
-        }
     }
 
     #[test]
@@ -467,41 +335,5 @@ mod tests {
             runner.propose(claim_from_links(h(2), h(11), vec![], 1)),
             Err(EpochError::WrongPhase)
         );
-    }
-
-    #[test]
-    fn frozen_claims_partition_into_their_real_clusters() {
-        // Two claims on disjoint parts of the link graph: today's settle
-        // still treats them as one implicit group, but the canonical
-        // partition already sees two independent clusters.
-        let mut runner = EpochRunner::genesis(1);
-        runner
-            .propose(claim_from_links(h(0xA1), h(10), vec![Link::stake(h(1), h(2), 100)], 1))
-            .unwrap();
-        runner
-            .propose(claim_from_links(h(0xB2), h(11), vec![Link::stake(h(3), h(4), 100)], 1))
-            .unwrap();
-        runner.freeze().unwrap();
-
-        let adjacency = crate::partition::Adjacency::new();
-        let clusters = runner.clusters(&adjacency, 0);
-        assert_eq!(clusters, vec![vec![0], vec![1]]);
-    }
-
-    #[test]
-    fn frozen_claims_with_overlapping_supports_merge() {
-        let mut runner = EpochRunner::genesis(1);
-        runner
-            .propose(claim_from_links(h(0xA1), h(10), vec![Link::stake(h(1), h(2), 100)], 1))
-            .unwrap();
-        runner
-            .propose(claim_from_links(h(0xB2), h(11), vec![Link::stake(h(3), h(4), 100)], 1))
-            .unwrap();
-        runner.freeze().unwrap();
-
-        let mut adjacency = crate::partition::Adjacency::new();
-        adjacency.insert(h(2), vec![h(3)]);
-        let clusters = runner.clusters(&adjacency, 1);
-        assert_eq!(clusters, vec![vec![0, 1]]);
     }
 }

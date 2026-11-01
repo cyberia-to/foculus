@@ -14,8 +14,8 @@
 //!
 //! Two settle paths:
 //! - [`settle_epoch`] — in-process MC samples (trusted settler / CLI)
-//! - [`settle_epoch_tickets`] — grind settlement tickets + fold monoid
-//!   (leaderless fold-mining first cut; see `tickets`)
+//! - [`settle_epoch_tickets`] — proven settlement tickets, linear cluster
+//!   check (see `settle_tickets`, `cluster`)
 
 use cyber_hemera::hash as hemera_hash;
 use tru::{
@@ -24,10 +24,10 @@ use tru::{
 
 use crate::beacon::{claims_root, open_beacon, verify_beacon, BeaconArtifact, TEST_OUTER_T};
 use crate::settlement::{self, Contribution};
-use crate::ticket_proof::{prove_fold_tree, verify_fold_seal, FoldSeal};
-use crate::tickets::{
-    assemble_fold_tree, easy_target, grind_settlement, self_fold, ClusterAcc,
-};
+use crate::cluster::ClusterProof;
+use crate::tickets::easy_target;
+
+pub use crate::settle_tickets::{settle_epoch_tickets, settle_with_peer_accs};
 
 /// One neuron's reward claim for an epoch cluster (propose window).
 #[derive(Clone)]
@@ -68,11 +68,10 @@ pub struct SettleReceipt {
     pub shares: Vec<SettledShare>,
     /// Outer VDF beacon artifact (live path).
     pub beacon_artifact: Option<BeaconArtifact>,
-    /// HyperNova seal over settlement tickets.
-    pub ticket_seal: Option<FoldSeal>,
-    /// HyperNova seal over fold-tree assembly.
-    pub fold_seal: Option<FoldSeal>,
-    /// Sample count k in the root accumulator (0 if MC path).
+    /// Every accepted settlement ticket with its proof (ticket path);
+    /// `None` on the Monte-Carlo path, which verifiers recompute.
+    pub settlement: Option<ClusterProof>,
+    /// Sample count: accepted tickets, or Monte-Carlo samples.
     pub sample_count: u64,
 }
 
@@ -83,10 +82,6 @@ pub enum RewardError {
     BudgetZero,
     /// Ticket grind produced no winning samples.
     NoTickets,
-    /// Root accumulator's sample count k is below the Hoeffding minimum for
-    /// (precision_epsilon, precision_delta): the MC estimate is not yet
-    /// trustworthy enough to mint against.
-    InsufficientPrecision { k: u64, k_min: u64 },
 }
 
 /// How many settlement tickets / grind budget for [`settle_epoch_tickets`].
@@ -103,12 +98,6 @@ pub struct TicketPolicy {
     pub fold_target: u64,
     /// Local miner id (usually the settler neuron).
     pub miner: [u8; 32],
-    /// Hoeffding ε for the decide gate: [`ClusterAcc::meets_precision`] must
-    /// hold on the root accumulator before a receipt mints. Default `Fx::ONE`
-    /// (k_min = 1) reproduces the old ungated behavior.
-    pub precision_epsilon: Fx,
-    /// Hoeffding δ for the decide gate; see `precision_epsilon`.
-    pub precision_delta: Fx,
 }
 
 impl Default for TicketPolicy {
@@ -120,8 +109,6 @@ impl Default for TicketPolicy {
             settle_target: easy_target(),
             fold_target: easy_target(),
             miner: [0u8; 32],
-            precision_epsilon: Fx::ONE,
-            precision_delta: Fx::ONE,
         }
     }
 }
@@ -213,6 +200,7 @@ pub fn propose_claim(
 /// 4. shapley MC under beacon
 /// 5. allocate `budget` tokens proportional to positive shares
 /// 6. clip: if directed_total is 0, no mint
+#[allow(clippy::too_many_arguments)]
 pub fn settle_epoch(
     epoch: u64,
     prev_beacon: &[u8; 32],
@@ -255,173 +243,10 @@ pub fn settle_epoch(
         budget,
         shares,
         beacon_artifact: Some(art),
-        ticket_seal: None,
-        fold_seal: None,
+        settlement: None,
         sample_count: samples,
     };
     Ok(receipt)
-}
-
-/// Settle via settlement tickets + fold monoid (fold-mining path).
-///
-/// 1. claims_root + beacon
-/// 2. grind winning tickets for `policy.miner`
-/// 3. self-fold → assemble fold tree (single leaf when one miner)
-/// 4. mean shares from root accumulator → budget allocation → receipt
-///
-/// Peer miner self-accumulators can be folded in via [`settle_with_peer_accs`].
-pub fn settle_epoch_tickets(
-    epoch: u64,
-    prev_beacon: &[u8; 32],
-    base: &[Link],
-    claims: &[RewardClaim],
-    ctx: &Context,
-    params: &FocusingParams,
-    budget: u64,
-    policy: &TicketPolicy,
-) -> Result<SettleReceipt, RewardError> {
-    settle_with_peer_accs(
-        epoch,
-        prev_beacon,
-        base,
-        claims,
-        ctx,
-        params,
-        budget,
-        policy,
-        &[],
-    )
-}
-
-/// The settle_target this epoch's contributor count implies under property
-/// 4's cluster-size banding (`tickets::banded_target`), given `policy`'s
-/// unbanded target as the value a cluster of `base_n` contributors would use.
-pub fn banded_settle_target(policy: &TicketPolicy, claims: &[RewardClaim], base_n: usize) -> u64 {
-    let n_contrib = contributions_with_rho(claims).len();
-    crate::tickets::banded_target(policy.settle_target, n_contrib, base_n)
-}
-
-/// Like [`settle_epoch_tickets`], but bands `policy.settle_target` by this
-/// epoch's contributor count first (property 4, progress-freedom): a live
-/// epoch computes its own per-cluster target instead of the caller banding
-/// it by hand before constructing `policy`.
-pub fn settle_epoch_tickets_banded(
-    epoch: u64,
-    prev_beacon: &[u8; 32],
-    base: &[Link],
-    claims: &[RewardClaim],
-    ctx: &Context,
-    params: &FocusingParams,
-    budget: u64,
-    policy: &TicketPolicy,
-    base_n: usize,
-) -> Result<SettleReceipt, RewardError> {
-    let banded = TicketPolicy {
-        settle_target: banded_settle_target(policy, claims, base_n),
-        ..policy.clone()
-    };
-    settle_epoch_tickets(epoch, prev_beacon, base, claims, ctx, params, budget, &banded)
-}
-
-/// Like [`settle_epoch_tickets`] but merges additional miner self-accumulators
-/// (gossiped peer batches) into the fold tree.
-pub fn settle_with_peer_accs(
-    epoch: u64,
-    prev_beacon: &[u8; 32],
-    base: &[Link],
-    claims: &[RewardClaim],
-    ctx: &Context,
-    params: &FocusingParams,
-    budget: u64,
-    policy: &TicketPolicy,
-    peer_accs: &[ClusterAcc],
-) -> Result<SettleReceipt, RewardError> {
-    if claims.is_empty() {
-        return Err(RewardError::EmptyClaims);
-    }
-    if budget == 0 {
-        return Err(RewardError::BudgetZero);
-    }
-    let ids: Vec<[u8; 32]> = claims.iter().map(|c| c.id).collect();
-    let cr = claims_root(&ids);
-    let art = open_beacon(epoch, prev_beacon, &cr, &[], TEST_OUTER_T);
-    if !verify_beacon(&art) {
-        return Err(RewardError::NoTickets);
-    }
-    let b_e = art.beacon;
-
-    let contribs = contributions_with_rho(claims);
-    let all_links: Vec<Link> = claims.iter().flat_map(|c| c.links.clone()).collect();
-    let directed_total = impulse(base, &all_links, ctx, params, params.epsilon).directed;
-
-    let tickets = grind_settlement(
-        base,
-        &contribs,
-        ctx,
-        params,
-        &b_e,
-        &cr,
-        &policy.miner,
-        policy.start_nonce,
-        policy.max_attempts,
-        policy.want,
-        policy.settle_target,
-    );
-    if tickets.is_empty() && peer_accs.is_empty() {
-        return Err(RewardError::NoTickets);
-    }
-
-    // HyperNova σ only after Δφ⁺ marginal replay for every ticket.
-    let ticket_seal = if !tickets.is_empty() {
-        let seal = crate::marginal_cert::prove_replayed_batch(
-            base, &contribs, ctx, params, &b_e, &cr, &tickets,
-        )
-        .map_err(|_| RewardError::NoTickets)?;
-        if !verify_fold_seal(&seal) {
-            return Err(RewardError::NoTickets);
-        }
-        Some(seal)
-    } else {
-        None
-    };
-
-    let local = self_fold(contribs.len(), &tickets);
-    let mut leaves = vec![local];
-    leaves.extend(peer_accs.iter().cloned());
-    // Prefer HyperNova-proven fold tree; fall back to monoid assemble.
-    let (root, fold_seal) = match prove_fold_tree(&b_e, &cr, &leaves) {
-        Ok((r, seal)) if verify_fold_seal(&seal) => (r, Some(seal)),
-        _ => {
-            let r = assemble_fold_tree(&b_e, &cr, &policy.miner, &leaves, policy.fold_target);
-            (r, None)
-        }
-    };
-    if root.k == 0 {
-        return Err(RewardError::NoTickets);
-    }
-    if !root.meets_precision(policy.precision_epsilon, policy.precision_delta) {
-        return Err(RewardError::InsufficientPrecision {
-            k: root.k,
-            k_min: ClusterAcc::k_min(policy.precision_epsilon, policy.precision_delta),
-        });
-    }
-    let neurons: Vec<[u8; 32]> = contribs.iter().map(|c| c.neuron).collect();
-    let raw_shares = root.mean_shares(&neurons);
-    let shares = allocate_budget(&raw_shares, budget, directed_total)?;
-
-    Ok(SettleReceipt {
-        epoch,
-        beacon: b_e,
-        claims_root: cr,
-        receipt_hash: receipt_hash(epoch, &b_e, &shares),
-        directed_total,
-        budget,
-        shares,
-        beacon_artifact: Some(art),
-        ticket_seal,
-        fold_seal,
-        sample_count: root.k,
-    })
 }
 
 /// Default tokens-per-Fx::ONE when mapping conserved mass without a tight budget.
@@ -485,10 +310,10 @@ fn allocate_budget(
         }
     }
     let paid: u64 = out.iter().map(|s| s.amount).sum();
-    if paid < budget {
-        if let Some(s) = out.iter_mut().find(|s| fx_weight(s.share) > 0) {
-            s.amount = s.amount.saturating_add(budget - paid);
-        }
+    if paid < budget
+        && let Some(s) = out.iter_mut().find(|s| fx_weight(s.share) > 0)
+    {
+        s.amount = s.amount.saturating_add(budget - paid);
     }
     Ok(out)
 }
@@ -517,19 +342,23 @@ pub fn mint_receipt_to_ledger(
     )
 }
 
-/// Nonnegative weight for proportional split, read straight off Fx's own
-/// fixed-point representation (never through `to_f64`, which is display-only
-/// and not a step any computation tru proves — arithmetic.md).
+/// Nonnegative weight for proportional split. Any strictly positive Fx maps
+/// to at least 1 so tiny Shapley shares still receive budget mass.
 fn fx_weight(x: Fx) -> u128 {
     if x <= Fx::ZERO {
         return 0;
     }
-    x.raw().as_u64() as u128
+    let f = x.to_f64();
+    if f <= 0.0 {
+        return 0;
+    }
+    let w = (f * 1_000_000_000_000.0) as u128;
+    w.max(1)
 }
 
 fn receipt_hash(epoch: u64, beacon: &[u8; 32], shares: &[SettledShare]) -> [u8; 32] {
     let mut sorted = shares.to_vec();
-    sorted.sort_by(|a, b| a.neuron.cmp(&b.neuron));
+    sorted.sort_by_key(|s| s.neuron);
     let mut buf = Vec::with_capacity(8 + 32 + sorted.len() * 40);
     buf.extend_from_slice(&epoch.to_le_bytes());
     buf.extend_from_slice(beacon);
@@ -543,24 +372,27 @@ fn receipt_hash(epoch: u64, beacon: &[u8; 32], shares: &[SettledShare]) -> [u8; 
         .unwrap_or(&[0u8; 32])
 }
 
-/// Verify a receipt's hash binding (does not re-run Shapley).
-/// When live artifacts are present, also checks outer VDF + HyperNova seals.
+/// Structural receipt check: hash binding, beacon artifact, and a ticket
+/// set without duplicates whose size is the sample count.
+///
+/// Does not establish that shares are correct — that needs the claims and
+/// base graph; use [`crate::settle_tickets::verify_settlement`].
 pub fn verify_receipt(receipt: &SettleReceipt) -> bool {
     if receipt.receipt_hash != receipt_hash(receipt.epoch, &receipt.beacon, &receipt.shares) {
         return false;
     }
-    if let Some(art) = &receipt.beacon_artifact {
-        if !verify_beacon(art) || art.beacon != receipt.beacon {
-            return false;
-        }
+    if let Some(art) = &receipt.beacon_artifact
+        && (!verify_beacon(art) || art.beacon != receipt.beacon)
+    {
+        return false;
     }
-    if let Some(seal) = &receipt.ticket_seal {
-        if !verify_fold_seal(seal) {
-            return false;
-        }
-    }
-    if let Some(seal) = &receipt.fold_seal {
-        if !verify_fold_seal(seal) {
+    if let Some(proof) = &receipt.settlement {
+        let ids: std::collections::BTreeSet<_> =
+            proof.tickets.iter().map(|t| (t.ticket.miner, t.ticket.nonce)).collect();
+        if proof.tickets.is_empty()
+            || ids.len() != proof.tickets.len()
+            || ids.len() as u64 != receipt.sample_count
+        {
             return false;
         }
     }
@@ -578,270 +410,5 @@ pub fn share_of(receipt: &SettleReceipt, neuron: &[u8; 32]) -> u64 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::beacon::GENESIS_PREV;
-    use tru::FocusingParams;
-
-    fn h(b: u8) -> [u8; 32] {
-        let mut x = [0u8; 32];
-        x[0] = b;
-        x
-    }
-
-    fn base() -> Vec<Link> {
-        vec![
-            Link::stake(h(1), h(2), 100),
-            Link::stake(h(2), h(3), 100),
-            Link::stake(h(3), h(1), 100),
-        ]
-    }
-
-    #[test]
-    fn solo_claim_earns_budget() {
-        let params = FocusingParams::default();
-        let claim = claim_from_links(
-            h(0xA1),
-            h(10),
-            vec![Link::stake(h(2), h(1), 8000)],
-            1,
-        );
-        let rec = settle_epoch(
-            1,
-            &GENESIS_PREV,
-            &base(),
-            &[claim],
-            &Context::none(),
-            &params,
-            16,
-            1000,
-        )
-        .unwrap();
-        assert!(verify_receipt(&rec));
-        assert_eq!(share_of(&rec, &h(10)), 1000);
-    }
-
-    #[test]
-    fn two_contributors_split_budget() {
-        let params = FocusingParams::default();
-        let a = claim_from_links(
-            h(0xA1),
-            h(10),
-            vec![Link::stake(h(2), h(1), 8000)],
-            1,
-        );
-        let b = claim_from_links(
-            h(0xB2),
-            h(11),
-            vec![Link::stake(h(3), h(1), 6000)],
-            1,
-        );
-        let rec = settle_epoch(
-            1,
-            &GENESIS_PREV,
-            &base(),
-            &[a, b],
-            &Context::none(),
-            &params,
-            32,
-            1000,
-        )
-        .unwrap();
-        assert!(verify_receipt(&rec));
-        let sa = share_of(&rec, &h(10));
-        let sb = share_of(&rec, &h(11));
-        assert_eq!(sa + sb, 1000, "conservation of budget");
-        // both positive if both contribute value
-        assert!(sa > 0 || sb > 0);
-    }
-
-    #[test]
-    fn copy_rho_zero_earns_nothing_when_bts_scores() {
-        // With 2 reports where one is a pure copy, surprise should suppress it
-        // when scores differ; with identical beliefs BTS may be flat.
-        // Guarantee: allocate_budget zeros zero-weight shares.
-        let raw = vec![(h(1), Fx::ONE), (h(2), Fx::ZERO)];
-        let shares = allocate_budget(&raw, 100, Fx::ONE).unwrap();
-        assert_eq!(shares[0].amount, 100);
-        assert_eq!(shares[1].amount, 0);
-    }
-
-    #[test]
-    fn fx_weight_matches_raw_scaled_integer() {
-        // fx_weight must read Fx's own scaled representation directly, never
-        // round-trip through to_f64 (arithmetic.md: never a step tru proves).
-        assert_eq!(fx_weight(Fx::ZERO), 0);
-        assert_eq!(fx_weight(Fx::ONE), 1u128 << 32);
-        let third = Fx::from_ratio(1, 3);
-        assert_eq!(fx_weight(third), third.raw().as_u64() as u128);
-    }
-
-    #[test]
-    fn allocate_budget_splits_by_raw_fixed_point_weight() {
-        // 1/3 and 2/3 in fixed point: the split must follow Fx's own raw
-        // scaled integers exactly, deterministically, with no float rounding
-        // drift from the old to_f64()*1e12 conversion.
-        let a = Fx::from_ratio(1, 3);
-        let b = Fx::from_ratio(2, 3);
-        let raw = vec![(h(1), a), (h(2), b)];
-        let shares = allocate_budget(&raw, 300, a + b).unwrap();
-        assert_eq!(shares[0].amount + shares[1].amount, 300, "conservation");
-        let (wa, wb) = (fx_weight(a), fx_weight(b));
-        let expected_a = ((wa * 300) / (wa + wb)) as u64;
-        assert_eq!(shares[0].amount, expected_a);
-        assert_eq!(shares[1].amount, 300 - expected_a);
-    }
-
-    #[test]
-    fn empty_claims_err() {
-        let err = settle_epoch(
-            1,
-            &GENESIS_PREV,
-            &base(),
-            &[],
-            &Context::none(),
-            &FocusingParams::default(),
-            8,
-            100,
-        );
-        assert_eq!(err.unwrap_err(), RewardError::EmptyClaims);
-    }
-
-    #[test]
-    fn ticket_settle_matches_budget() {
-        let params = FocusingParams::default();
-        let claim = claim_from_links(
-            h(0xA1),
-            h(10),
-            vec![Link::stake(h(2), h(1), 8000)],
-            1,
-        );
-        let policy = TicketPolicy {
-            want: 4,
-            max_attempts: 64,
-            miner: h(10),
-            ..TicketPolicy::default()
-        };
-        let rec = settle_epoch_tickets(
-            1,
-            &GENESIS_PREV,
-            &base(),
-            &[claim],
-            &Context::none(),
-            &params,
-            1000,
-            &policy,
-        )
-        .unwrap();
-        assert!(verify_receipt(&rec));
-        assert_eq!(share_of(&rec, &h(10)), 1000);
-    }
-
-    #[test]
-    fn tight_precision_gate_rejects_undersampled_root() {
-        let params = FocusingParams::default();
-        let claim = claim_from_links(
-            h(0xA1),
-            h(10),
-            vec![Link::stake(h(2), h(1), 8000)],
-            1,
-        );
-        // want=4 grinds only a handful of winning tickets — nowhere near the
-        // k_min ≈ 265 that (ε=0.1, δ=0.01) demands.
-        let policy = TicketPolicy {
-            want: 4,
-            max_attempts: 64,
-            miner: h(10),
-            precision_epsilon: Fx::from_ratio(1, 10),
-            precision_delta: Fx::from_ratio(1, 100),
-            ..TicketPolicy::default()
-        };
-        let err = settle_epoch_tickets(
-            1,
-            &GENESIS_PREV,
-            &base(),
-            &[claim],
-            &Context::none(),
-            &params,
-            1000,
-            &policy,
-        )
-        .unwrap_err();
-        match err {
-            RewardError::InsufficientPrecision { k, k_min } => {
-                assert!(k < k_min);
-                assert!(k_min > 100 && k_min < 400);
-            }
-            other => panic!("expected InsufficientPrecision, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn banded_settle_target_scales_with_contributor_count() {
-        let policy = TicketPolicy {
-            settle_target: 1 << 40,
-            ..TicketPolicy::default()
-        };
-        let claims_of = |n: u8| -> Vec<RewardClaim> {
-            (0..n)
-                .map(|i| {
-                    claim_from_links(
-                        h(0x50 + i),
-                        h(0x70 + i),
-                        vec![Link::stake(h(2), h(1), 100 + i as u128)],
-                        1,
-                    )
-                })
-                .collect()
-        };
-        let small = claims_of(4);
-        let large = claims_of(32);
-
-        // n_contrib == base_n: banding is a no-op.
-        assert_eq!(banded_settle_target(&policy, &small, 4), policy.settle_target);
-
-        // n_contrib scales the target exactly as tickets::banded_target does.
-        let expect_large = crate::tickets::banded_target(policy.settle_target, 32, 4);
-        assert_eq!(banded_settle_target(&policy, &large, 4), expect_large);
-        assert!(
-            expect_large > policy.settle_target,
-            "a larger cluster should get an easier (larger) target"
-        );
-    }
-
-    #[test]
-    fn settle_epoch_tickets_banded_matches_plain_when_n_equals_base_n() {
-        let params = FocusingParams::default();
-        let claim = claim_from_links(h(0xA1), h(10), vec![Link::stake(h(2), h(1), 8000)], 1);
-        let policy = TicketPolicy {
-            want: 4,
-            max_attempts: 64,
-            miner: h(10),
-            ..TicketPolicy::default()
-        };
-        let plain = settle_epoch_tickets(
-            1,
-            &GENESIS_PREV,
-            &base(),
-            &[claim.clone()],
-            &Context::none(),
-            &params,
-            1000,
-            &policy,
-        )
-        .unwrap();
-        let banded = settle_epoch_tickets_banded(
-            1,
-            &GENESIS_PREV,
-            &base(),
-            &[claim],
-            &Context::none(),
-            &params,
-            1000,
-            &policy,
-            1,
-        )
-        .unwrap();
-        assert_eq!(plain.receipt_hash, banded.receipt_hash);
-    }
-}
+#[path = "rewards_tests.rs"]
+mod tests;

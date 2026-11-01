@@ -8,7 +8,7 @@
 //! Closes the gap between library pieces and a continuous cyber flow:
 //! ```text
 //! ingest signals → tip advance → epoch propose/freeze/beacon
-//!   → grind + certify Δφ⁺ tickets → (radio) SelfAcc → settle
+//!   → grind + prove Δφ⁺ tickets → (radio) SelfAcc → redraw + settle
 //!   → EpochCertificate
 //! ```
 //!
@@ -31,7 +31,7 @@ use crate::rewards::{
     claim_from_links, share_of, verify_receipt, RewardClaim, TicketPolicy,
 };
 use crate::tickets::{easy_target, grind_settlement, self_fold, ClusterAcc};
-use crate::tip::{Tip, TipProver, TipTrust};
+use crate::tip::{Tip, TipProver, TipStep};
 use crate::vdf::{self, VdfProof};
 
 /// Participation mode. Partial retains the local graph/settlement duties of
@@ -85,7 +85,7 @@ impl LiveNode {
             NodeMode::Light => (Tip::untrusted(), None),
             NodeMode::Full | NodeMode::Partial => {
                 let mut prover = TipProver::new();
-                let _ = prover.fold_height(0, [0u8; 32]);
+                let _ = prover.push_height(0, [0u8; 32]);
                 let tip = prover.seal_tip().unwrap_or_else(|_| Tip::from_local(&Checkpoint {
                     root: [0u8; 32],
                     acc: None,
@@ -140,15 +140,20 @@ impl LiveNode {
         Ok(())
     }
 
-    /// Light: advance fold tip (clock C).
-    pub fn light_advance(&mut self, height: u64, root: [u8; 32]) -> Result<(), LiveError> {
+    /// Light: extend the chain tip by one step whose new head is trusted (clock C).
+    pub fn light_advance(&mut self, step: TipStep, trusted_head: &[u8; 32]) -> Result<(), LiveError> {
         if self.mode != NodeMode::Light {
             return Err(LiveError::WrongMode);
         }
         self.tip
-            .advance_fold(height, root)
+            .advance_chain(step, trusted_head)
             .map_err(|_| LiveError::TipAdvanceFailed)?;
         Ok(())
+    }
+
+    /// Full/partial: the step chain a light client joins with, and its head.
+    pub fn tip_chain(&self) -> Option<(&crate::tip::TipChain, [u8; 32])> {
+        self.tip_prover.as_ref().map(|p| (p.chain(), p.head()))
     }
 
     /// Full/partial: ingest a signal into history and propose-window claim.
@@ -255,10 +260,9 @@ impl LiveNode {
         if !verify_receipt(&rec) {
             return Err(LiveError::SettleFailed);
         }
-        // Receipt already carries ticket_seal + fold_seal (HyperNova).
-        // Marginal replay is enforced when callers use marginal_cert on tickets.
+        // The receipt carries every ticket proof; verify_epoch_cert below
+        // re-verifies them from the public claims and base graph.
         let cr = rec.claims_root;
-        let batch_seal = rec.ticket_seal.clone();
         self.credit_receipt(&rec, self.tip.height);
 
         let art = self.epoch.beacon.clone().ok_or(LiveError::EpochError)?;
@@ -268,7 +272,6 @@ impl LiveNode {
             art,
             cr,
             Some(rec),
-            batch_seal,
             None,
         );
         let inputs = SettleVerifyInputs {
@@ -276,6 +279,7 @@ impl LiveNode {
             claims: self.epoch.claims(),
             ctx: &ctx,
             params: &params,
+            target: easy_target(),
         };
         if !verify_epoch_cert(&cert, Some(&inputs)) {
             return Err(LiveError::CertInvalid);
@@ -316,6 +320,7 @@ impl LiveNode {
                 claims: c,
                 ctx: &ctx,
                 params: &params,
+                target: easy_target(),
             };
             verify_epoch_cert(&cert, Some(&inputs))
         } else {
@@ -324,16 +329,16 @@ impl LiveNode {
         if !ok {
             return Err(LiveError::CertInvalid);
         }
-        // Light advances tip to cert tip if fold mode
-        if self.mode == NodeMode::Light {
-            if cert.tip_trust == TipTrust::FoldDecided || cert.tip_height >= self.tip.height {
-                // Import tip height/root as local applied for test path when we only have cert
-                self.tip = Tip::from_local(&Checkpoint {
-                    root: cert.tip_root,
-                    acc: None,
-                    height: cert.tip_height,
-                });
-            }
+        // A certificate does not prove its tip root: a light node follows the
+        // height but keeps no trust in a root its own chain has not reached.
+        if self.mode == NodeMode::Light
+            && cert.tip_height > self.tip.height
+        {
+            self.tip = Tip::join_checkpoint(&Checkpoint {
+                root: cert.tip_root,
+                acc: None,
+                height: cert.tip_height,
+            });
         }
         if let Some(rec) = &cert.settle {
             self.credit_receipt(rec, cert.tip_height);
@@ -407,7 +412,7 @@ impl LiveNode {
         };
         if let Some(prover) = self.tip_prover.as_mut() {
             prover
-                .fold_height(h, root)
+                .push_height(h, root)
                 .map_err(|_| LiveError::TipAdvanceFailed)?;
             self.tip = prover.seal_tip().map_err(|_| LiveError::TipAdvanceFailed)?;
         } else {
@@ -455,136 +460,5 @@ pub enum LiveError {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn h(b: u8) -> [u8; 32] {
-        let mut x = [0u8; 32];
-        x[0] = b;
-        x
-    }
-
-    fn base() -> Vec<Link> {
-        vec![
-            Link::stake(h(1), h(2), 100),
-            Link::stake(h(2), h(3), 100),
-            Link::stake(h(3), h(1), 100),
-        ]
-    }
-
-    #[test]
-    fn full_node_link_settle_and_mature() {
-        let mut full = LiveNode::new(NodeMode::Full, h(10));
-        full.reward_base = base();
-        full.budget = 500;
-        full.settle_depth = 1;
-        full.link(h(2), h(1), 8000, 1).unwrap();
-        assert!(full.grade4());
-        let cert = full.close_and_settle_epoch().unwrap();
-        let rec = cert.settle.as_ref().expect("settle");
-        assert!(verify_receipt(rec));
-        assert_eq!(share_of(rec, &h(10)), 500);
-        assert!(full.pending_rewards.iter().any(|(a, _, _)| *a == 500));
-        full.bump_tip().unwrap(); // mature depth 1
-        assert_eq!(full.matured_reward, 500);
-        // cert clone stays verifiable
-        assert!(verify_epoch_cert(&cert.clone(), None));
-    }
-
-    #[test]
-    fn multi_node_swarm_leaderless_settle() {
-        let mut alice = LiveNode::new(NodeMode::Full, h(10));
-        let mut bob = LiveNode::new(NodeMode::Full, h(11));
-        let mut carol = LiveNode::new(NodeMode::Light, h(12));
-        alice.reward_base = base();
-        bob.reward_base = base();
-        alice.budget = 1000;
-        bob.budget = 1000;
-        alice.settle_depth = 0;
-        bob.settle_depth = 0;
-        carol.settle_depth = 0;
-
-        alice.link(h(2), h(1), 8000, 1).unwrap();
-        bob.link(h(3), h(1), 6000, 1).unwrap();
-
-        // Cross-gossip signals
-        for s in bob.signals.values().cloned().collect::<Vec<_>>() {
-            alice.ingest_signal(s).ok();
-        }
-        for s in alice.signals.values().cloned().collect::<Vec<_>>() {
-            bob.ingest_signal(s).ok();
-        }
-
-        // Shared claim set on alice's epoch runner
-        alice.epoch = EpochRunner::genesis(1);
-        alice.epoch.budget = 1000;
-        for s in alice.signals.values() {
-            alice
-                .epoch
-                .propose(claim_from_links(s.id, s.neuron, s.links.clone(), s.valence))
-                .unwrap();
-        }
-        alice.freeze_and_beacon().unwrap();
-
-        // Bob mirrors claim set + beacon (network agreement)
-        bob.epoch = EpochRunner::genesis(1);
-        bob.epoch.budget = 1000;
-        for s in alice.signals.values() {
-            bob.epoch
-                .propose(claim_from_links(s.id, s.neuron, s.links.clone(), s.valence))
-                .unwrap();
-        }
-        bob.epoch.freeze().unwrap();
-        bob.epoch.beacon = alice.epoch.beacon.clone();
-        bob.epoch.phase = EpochPhase::BeaconReady;
-        bob.epoch.claims_root = alice.epoch.claims_root;
-
-        let acc_b = bob.mine_self_acc().unwrap();
-        let acc_a = alice.mine_self_acc().unwrap();
-        alice.absorb_peer_acc(acc_b);
-        alice.absorb_peer_acc(acc_a);
-
-        let cert = alice.close_and_settle_epoch().unwrap();
-        let rec = cert.settle.as_ref().unwrap();
-        assert_eq!(rec.shares.iter().map(|s| s.amount).sum::<u64>(), 1000);
-        assert!(rec.sample_count >= 2);
-
-        // Light accepts cert (idempotent)
-        let claims: Vec<_> = alice
-            .signals
-            .values()
-            .map(|s| claim_from_links(s.id, s.neuron, s.links.clone(), s.valence))
-            .collect();
-        carol.reward_base = base();
-        carol.accept_epoch_cert(cert.clone(), Some(&claims)).unwrap();
-        carol.accept_epoch_cert(cert, Some(&claims)).unwrap(); // no double credit
-        assert!(carol.tip().height > 0);
-        assert!(carol.last_cert.is_some());
-    }
-
-    #[test]
-    fn partial_mode_same_as_full_for_local_settle() {
-        let mut partial = LiveNode::new(NodeMode::Partial, h(10));
-        partial.reward_base = base();
-        partial.budget = 200;
-        partial.settle_depth = 0;
-        partial.link(h(2), h(1), 5000, 1).unwrap();
-        let cert = partial.close_and_settle_epoch().unwrap();
-        assert!(verify_epoch_cert(&cert, None));
-        assert_eq!(partial.matured_reward, 200);
-    }
-
-    #[test]
-    fn light_cannot_ingest() {
-        let mut light = LiveNode::new(NodeMode::Light, h(1));
-        assert_eq!(light.link(h(2), h(1), 1, 1), Err(LiveError::WrongMode));
-    }
-
-    #[test]
-    fn mine_requires_beacon() {
-        let mut n = LiveNode::new(NodeMode::Full, h(10));
-        n.reward_base = base();
-        n.link(h(2), h(1), 100, 1).unwrap();
-        assert!(matches!(n.mine_self_acc(), Err(LiveError::BeaconNotReady)));
-    }
-}
+#[path = "live_tests.rs"]
+mod tests;
