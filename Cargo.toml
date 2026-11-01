@@ -26,6 +26,11 @@ net = ["dep:iroh", "dep:tokio", "dep:tracing-subscriber"]
 # (cybergraph fe115b3, dev-dependencies). Never enable it on a production path.
 legacy-proofs = ["zheng/legacy"]
 
+# Cluster settlement as one zheng accumulation + decider (specs/fold-mining.md
+# § proof profile today). Off by default: slower than native verification
+# until zheng recursion lands (audit/accumulated-settlement-2026-10.md).
+accumulated-settlement = []
+
 [dependencies]
 nebu = { package = "strata-nebu", version = "0.1", path = "../strata/nebu/rs" }
 cyber-hemera = { version = "0.4", path = "../hemera/rs" }
@@ -46,5 +51,11 @@ clap = { version = "4", features = ["derive"] }
 tracing-subscriber = { version = "0.3", optional = true }
 
 [dev-dependencies]
+# examples/device_profiles picks the prover backend (ZHENG_BACKEND)
+cyber-lens-gpu = { version = "0.1.0", path = "../lens/gpu", features = ["metal"] }
 proptest = "1"
 tempfile = "3"
+
+[[example]]
+name = "accumulated_bench"
+required-features = ["accumulated-settlement"]
