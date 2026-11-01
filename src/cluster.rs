@@ -39,6 +39,9 @@ pub enum ClusterError {
     Duplicate { index: usize },
     /// The claimed accumulator differs from the one the tickets produce.
     Mismatch,
+    /// The accumulated proof of the cluster's relations does not verify, or
+    /// its shape does not match the tickets (`cluster_accumulated`).
+    Accumulation,
 }
 
 /// Strict cluster check (receipts): every ticket must verify, no duplicates.

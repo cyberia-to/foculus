@@ -8,6 +8,9 @@
 use std::path::Path;
 
 const ALLOWED: &[&str] = &[
+    // phase-3 hash-based accumulation (zheng specs/accumulation.md), the
+    // successor of the legacy fold: every step and the decider are checked
+    "zheng::accumulate::ccs",
     "zheng::execution::Certificate",
     "zheng::execution::certificate",
     "zheng::types::CCSInstance",
