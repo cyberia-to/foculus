@@ -1,9 +1,9 @@
 // ---
-// tags: foculus, rust, node, live, full, cell, light
+// tags: foculus, rust, node, live, full, partial, light
 // crystal-type: source
 // crystal-domain: cyber
 // ---
-//! Unified live node — full / cell / light product stack.
+//! Unified live node — full / partial / light product stack.
 //!
 //! Closes the gap between library pieces and a continuous cyber flow:
 //! ```text
@@ -14,7 +14,7 @@
 //!
 //! Modes ([node-modes](cyber/specs/node-modes.md)):
 //! - **Full**: holds signal history, runs settle, issues epoch certs, serves tip
-//! - **Cell**: local neuron claims + money-facing settle apply; embeds tip
+//! - **Partial**: local neuron claims + money-facing settle apply; embeds tip
 //! - **Light**: tip join/advance only; verifies epoch certs + openings; no grind
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -34,11 +34,12 @@ use crate::tickets::{easy_target, grind_settlement, self_fold, ClusterAcc};
 use crate::tip::{Tip, TipProver, TipTrust};
 use crate::vdf::{self, VdfProof};
 
-/// Participation mode.
+/// Participation mode. Partial retains the local graph/settlement duties of
+/// the former second variant. This enum has no persisted or wire codec.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NodeMode {
     Full,
-    Cell,
+    Partial,
     Light,
 }
 
@@ -59,14 +60,14 @@ pub struct LiveNode {
     pub neuron: [u8; 32],
     tip: Tip,
     tip_prover: Option<TipProver>,
-    /// Full/cell: signal log by id.
+    /// Full/partial: signal log by id.
     signals: BTreeMap<[u8; 32], LiveSignal>,
-    /// Base graph for focusing (full/cell).
+    /// Base graph for focusing (full/partial).
     pub reward_base: Vec<Link>,
     epoch: EpochRunner,
     /// Last issued certificate.
     pub last_cert: Option<EpochCertificate>,
-    /// Peer SelfAccs received (full/cell settler).
+    /// Peer SelfAccs received (full/partial settler).
     peer_accs: Vec<ClusterAcc>,
     pub budget: u64,
     pub settle_depth: u64,
@@ -82,7 +83,7 @@ impl LiveNode {
     pub fn new(mode: NodeMode, neuron: [u8; 32]) -> Self {
         let (tip, tip_prover) = match mode {
             NodeMode::Light => (Tip::untrusted(), None),
-            NodeMode::Full | NodeMode::Cell => {
+            NodeMode::Full | NodeMode::Partial => {
                 let mut prover = TipProver::new();
                 let _ = prover.fold_height(0, [0u8; 32]);
                 let tip = prover.seal_tip().unwrap_or_else(|_| Tip::from_local(&Checkpoint {
@@ -127,7 +128,7 @@ impl LiveNode {
         self.epoch.claims()
     }
 
-    /// Light: join from a full/cell tip checkpoint.
+    /// Light: join from a full/partial tip checkpoint.
     pub fn light_join(&mut self, tip: Tip) -> Result<(), LiveError> {
         if self.mode != NodeMode::Light {
             return Err(LiveError::WrongMode);
@@ -150,7 +151,7 @@ impl LiveNode {
         Ok(())
     }
 
-    /// Full/cell: ingest a signal into history and propose-window claim.
+    /// Full/partial: ingest a signal into history and propose-window claim.
     pub fn ingest_signal(&mut self, sig: LiveSignal) -> Result<(), LiveError> {
         if matches!(self.mode, NodeMode::Light) {
             return Err(LiveError::WrongMode);
@@ -197,9 +198,9 @@ impl LiveNode {
         Ok(id)
     }
 
-    /// Absorb peer SelfAcc (full/cell settler).
+    /// Absorb peer SelfAcc (full/partial settler).
     pub fn absorb_peer_acc(&mut self, acc: ClusterAcc) {
-        if !matches!(self.mode, NodeMode::Full | NodeMode::Cell) {
+        if !matches!(self.mode, NodeMode::Full | NodeMode::Partial) {
             return;
         }
         self.peer_accs.push(acc);
@@ -207,7 +208,7 @@ impl LiveNode {
 
     /// Close propose, open beacon from signal VDFs, settle, issue epoch cert.
     ///
-    /// This is the continuous consensus→rewards step for full/cell.
+    /// This is the continuous consensus→rewards step for full/partial.
     pub fn close_and_settle_epoch(&mut self) -> Result<EpochCertificate, LiveError> {
         if matches!(self.mode, NodeMode::Light) {
             return Err(LiveError::WrongMode);
@@ -301,7 +302,7 @@ impl LiveNode {
         }
     }
 
-    /// Light/full/cell: verify a peer-issued epoch certificate.
+    /// Light/full/partial: verify a peer-issued epoch certificate.
     pub fn accept_epoch_cert(
         &mut self,
         cert: EpochCertificate,
@@ -342,7 +343,7 @@ impl LiveNode {
         Ok(())
     }
 
-    /// Publish local SelfAcc for multi-miner (full/cell). Requires BeaconReady.
+    /// Publish local SelfAcc for multi-miner (full/partial). Requires BeaconReady.
     pub fn mine_self_acc(&self) -> Result<ClusterAcc, LiveError> {
         if matches!(self.mode, NodeMode::Light) {
             return Err(LiveError::WrongMode);
@@ -435,7 +436,7 @@ impl LiveNode {
         self.pending_rewards = keep;
     }
 
-    /// Export tip for light clients (full/cell).
+    /// Export tip for light clients (full/partial).
     pub fn export_tip(&self) -> Tip {
         self.tip.clone()
     }
@@ -562,15 +563,15 @@ mod tests {
     }
 
     #[test]
-    fn cell_mode_same_as_full_for_local_settle() {
-        let mut cell = LiveNode::new(NodeMode::Cell, h(10));
-        cell.reward_base = base();
-        cell.budget = 200;
-        cell.settle_depth = 0;
-        cell.link(h(2), h(1), 5000, 1).unwrap();
-        let cert = cell.close_and_settle_epoch().unwrap();
+    fn partial_mode_same_as_full_for_local_settle() {
+        let mut partial = LiveNode::new(NodeMode::Partial, h(10));
+        partial.reward_base = base();
+        partial.budget = 200;
+        partial.settle_depth = 0;
+        partial.link(h(2), h(1), 5000, 1).unwrap();
+        let cert = partial.close_and_settle_epoch().unwrap();
         assert!(verify_epoch_cert(&cert, None));
-        assert_eq!(cell.matured_reward, 200);
+        assert_eq!(partial.matured_reward, 200);
     }
 
     #[test]

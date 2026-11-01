@@ -84,7 +84,7 @@ $b_E$ inherits foculus's open questions where they touch the finalized set: a su
 
 ## open
 
-- tuning $T$ against the epoch clock and the settle window (epoch length is foculus's, [[provable-consensus]])
+- tuning $T$ against the epoch clock and the settle window (the epoch boundary and $\mathcal{S}_E$ are defined by [[foculus epoch]]; epoch length = $T$ + finality latency there)
 - whether the outer VDF is a fresh evaluation or folds into the per-signal VDF chain already present, a possible constant-factor saving
 - a formal bound on residual bias from sub-$d$ reorgs, tied to foculus's threshold-gaming analysis
 

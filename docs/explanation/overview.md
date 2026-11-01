@@ -10,7 +10,7 @@ foculus is the [[consensus]] mechanism where agreement emerges from the mathemat
 
 ## the moment a signal becomes knowledge
 
-before consensus, a [[cyberlink]] is a proposal -- a [[neuron]]'s claim about the relationship between two [[particles]]. after consensus, it has [[finality]]. the [[cybergraph]] absorbs it as permanent structure. the signal becomes [[knowledge]]
+before consensus, a [[cyberlink]] is a proposal -- a [[neuron]]'s claim about the relationship between two [[files]]. after consensus, it has [[finality]]. the [[cybergraph]] absorbs it as permanent structure. the signal becomes [[knowledge]]
 
 every [[vimputer]] node applies the same [[signals]] in the same order, converging on identical [[state]]. safety: no two nodes disagree. liveness: the system keeps producing [[steps]]
 

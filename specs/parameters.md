@@ -49,7 +49,7 @@ the one real measurement in this repo: bostrom's empirical $\kappa=0.74,\lambda_
 | $\varepsilon$ | precision floor / $\varepsilon$-support cutoff | illustrative-only despite [[reward specification]]'s appendix calling it "a protocol constant" -- no value is actually fixed | $10^{-6}$ |
 | $\delta$ | Hoeffding confidence parameter for settlement sampling | illustrative-only | $10^{-6}$ |
 | $\delta_{\text{stake}}$ | assumed honest stake margin above $\frac12$ | this is a security *assumption* the proofs are conditioned on, not a protocol-set value -- how much margin to plan for is a deployment decision | $0.05$ used throughout [[foculus security at scale]]'s worked examples |
-| $d$ | reorg-stability / finality depth | undetermined -- referenced symbolically across [[foculus beacon]] (beacon stability), [[fold-mining]] (pulse escrow), and `roadmap/source-set-anchoring.md` (stake-snapshot anchoring), all three explicitly sharing one parameter, never a number | -- |
+| $d$ | reorg-stability / finality depth, **unit: epochs** ([[foculus epoch]]) | value undetermined -- referenced symbolically across [[foculus beacon]] (beacon stability), [[fold-mining]] (pulse escrow), and `roadmap/source-set-anchoring.md` (stake-snapshot anchoring), all three explicitly sharing one parameter, never a number | -- |
 | $\kappa'$ | adaptive-threshold multiplier, $\tau(t)=\mu_D+\kappa'\sigma_D$ | range fixed by `specs/protocol.md` | $\kappa'\in[1,2]$; $1.5$ used in worked examples |
 | $\gamma$ | $\phi^*$ damping decay rate | range only | $\gamma\in(0,1)$, no specific value chosen |
 
