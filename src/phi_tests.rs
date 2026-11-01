@@ -46,8 +46,13 @@ impl Fixture {
 }
 
 /// φ* after 6 steps and the graph commitments, as zheng 0.4's
-/// `phi::prove_phi_star` and `SparseGraph::commitment` produced them for this
-/// fixture (feature `legacy`, before the port left zheng behind).
+/// `phi::prove_phi_star` and `SparseGraph::commitment` produce them for this
+/// fixture (feature `legacy`) on cyber-hemera 0.4: zheng 166a14e, hemera
+/// 8559b52, soft3 diagnostic run 41332954376, where zheng's and foculus's φ*,
+/// transition and symmetric commitments are equal. The `PhiGraph` commitment
+/// has no zheng counterpart (domain `foculus-phi-graph-v1`); it is foculus's
+/// digest over those two commitments, the degree, the teleport and the params,
+/// from the same run. The first freeze (87603ec) was taken on hemera 0.3.1.
 #[test]
 fn phi_star_matches_the_zheng_vectors() {
     let f = Fixture::new();
@@ -59,22 +64,22 @@ fn phi_star_matches_the_zheng_vectors() {
     assert_eq!(
         f.t.commitment(),
         [
-            243, 42, 178, 220, 193, 59, 124, 67, 120, 191, 136, 50, 236, 135, 202, 201, 166, 40,
-            63, 111, 23, 176, 90, 200, 128, 98, 155, 254, 239, 117, 55, 31
+            75, 238, 46, 9, 134, 44, 34, 92, 4, 185, 157, 75, 130, 82, 26, 185, 254, 244, 204, 216,
+            198, 148, 245, 246, 210, 58, 40, 24, 63, 226, 78, 191
         ]
     );
     assert_eq!(
         f.s.commitment(),
         [
-            66, 245, 177, 166, 177, 33, 12, 233, 103, 42, 16, 63, 248, 175, 56, 197, 25, 69, 33,
-            158, 132, 163, 122, 204, 16, 137, 215, 33, 12, 143, 223, 61
+            46, 164, 29, 123, 244, 18, 210, 238, 66, 62, 209, 140, 122, 241, 68, 166, 109, 81, 34,
+            76, 79, 3, 52, 138, 112, 185, 20, 244, 80, 151, 86, 152
         ]
     );
     assert_eq!(
         f.graph().commitment(),
         [
-            30, 53, 123, 32, 139, 107, 72, 242, 18, 215, 49, 68, 230, 242, 197, 200, 245, 227,
-            243, 159, 108, 11, 22, 163, 114, 124, 127, 209, 19, 62, 106, 140
+            240, 136, 171, 145, 148, 200, 92, 156, 159, 178, 123, 103, 97, 9, 212, 208, 134, 167,
+            82, 208, 172, 205, 200, 52, 129, 245, 108, 5, 13, 175, 133, 20
         ]
     );
 }
