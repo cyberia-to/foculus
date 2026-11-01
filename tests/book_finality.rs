@@ -1,4 +1,3 @@
-#![cfg(feature = "legacy-proofs")]
 // ---
 // tags: foculus, rust, finality, oikos
 // crystal-type: source

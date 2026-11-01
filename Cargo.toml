@@ -14,19 +14,16 @@ readme = "README.md"
 [[bin]]
 name = "foculus"
 path = "src/bin/main.rs"
-required-features = ["legacy-proofs"]
 
 [features]
 default = []
 net = ["dep:iroh", "dep:tokio", "dep:tracing-subscriber"]
-# The retired 0.3.x folded trace API: commit/open/verify_eval/verify/fold/
-# decide, the universal CCS (`ccs`), the legacy fold (`folding`) and phi
-# SpMV. UNSOUND (fold unchecked, statement unbound — specs/decider.md); kept
-# off by default so external consumers can migrate. Never enable it on a
-# production path.
-# (zheng's warning, verbatim.) The pay/ticket/step/tip/epoch-cert modules and
-# everything that depends on them are built on that API, so they are off by
-# default: no production consumer should enable zheng/legacy.
+# Forwards zheng's retired 0.3.x folded trace API (`zheng/legacy`: commit/
+# open/verify_eval/verify/fold/decide, `ccs`, `folding`, phi SpMV). UNSOUND
+# (fold unchecked, statement unbound — specs/decider.md). foculus itself uses
+# none of it since #61 (tests/no_legacy_zheng.rs guards src); the feature stays
+# only because a consumer's tests still call zheng's retired API through it
+# (cybergraph fe115b3, dev-dependencies). Never enable it on a production path.
 legacy-proofs = ["zheng/legacy"]
 
 [dependencies]

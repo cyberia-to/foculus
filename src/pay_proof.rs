@@ -3,32 +3,43 @@
 // crystal-type: source
 // crystal-domain: cyber
 // ---
-//! Pay proofs — zheng σ for money Intents (WP depth: σ required on pay).
+//! Pay proofs — σ for money Intents (WP depth: σ required on pay).
 //!
-//! A pay proof is a HyperNova fold + decide over one add row of the
-//! universal step CCS ([`crate::step`]) whose registers hash the pay
-//! content id and conservation claim. Light and full peers verify with
-//! `verify_pay` without re-executing the wallet. Binding caveat in
-//! [`crate::step`].
+//! The statement of a pay signal `S` with legs `a_0..a_{L−1}` (the amounts
+//! of its links, in order):
 //!
-//! Statement binding:
-//! - program_hash = domain "foculus-pay-v0"
-//! - input_hash   = hemera(content_id ‖ total_out ‖ leg_count)
-//! - output_hash  = content_id (signal identity)
-//! - focus_bound  = total_out (amount bound)
+//! ```text
+//! content_id = S.content_id()                        statement check
+//! a_j < 2^62,  s_j = s_{j−1} + a_j < 2^62,  s_{−1}=0  relation (CCS)
+//! s_{L−1} = total_out                                 relation, total pinned
+//! a_j = S.links[j].amount                             witness check
+//! ```
+//!
+//! The range checks make the field sum an integer sum: no leg or running
+//! total can wrap the Goldilocks modulus, so `total_out` is the amount that
+//! leaves. Legs and running sums are the witness — disclosed today, the
+//! part a zero-knowledge profile hides. Binding legs to `content_id` is the
+//! witness check, native because no CCS for hemera over the signal bytes
+//! exists here; the verifier therefore needs the signal itself.
 
-use cyber_hemera::hash as hemera_hash;
-use zheng::types::{Accumulator, Proof, ProofParams, Statement};
-use zheng::{Transcript, decide, fold};
+use nebu::Goldilocks as F;
+use zheng::types::{CCSInstance, CCSWitness};
 
 use bbg::Particle;
 
-use crate::step;
+use crate::chain::Signal;
+use crate::proof::{self, Proof, R1cs, Relation, Witnessed, digest};
 
-const PROGRAM: [u8; 32] = *b"foculus-pay-proof-v0...........\0";
+const STATEMENT_DOMAIN: &[u8] = b"foculus-pay-proof-v1";
 
-/// Public inputs for a pay proof.
-#[derive(Clone, Debug)]
+/// Bits of every leg and running total: amounts are below 2^62, so a sum of
+/// two never reaches the field modulus.
+pub const AMOUNT_BITS: usize = 62;
+/// Largest leg or total a pay proof accepts.
+pub const MAX_PAY_AMOUNT: u64 = (1 << AMOUNT_BITS) - 1;
+
+/// Public inputs of a pay proof, derived from the signal.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PayStatement {
     /// Signal content_id (covers links + box_moves).
     pub content_id: Particle,
@@ -38,75 +49,152 @@ pub struct PayStatement {
     pub leg_count: u32,
 }
 
-impl PayStatement {
-    pub fn to_zheng(&self) -> Statement {
-        let mut input = [0u8; 32];
-        let h = hemera_hash(&self.material());
-        let b = h.as_bytes();
-        input[..b.len().min(32)].copy_from_slice(&b[..b.len().min(32)]);
-        Statement {
-            program_hash: PROGRAM,
-            input_hash: input,
-            output_hash: self.content_id,
-            focus_bound: self.total_out,
-            // no look rows in a pay program: the no-state-read sentinel
-            bbg_root: [0u8; 32],
-        }
-    }
-
-    /// content_id ‖ total_out ‖ leg_count — the bytes both the statement's
-    /// input hash and the fold step's registers are read from.
-    fn material(&self) -> [u8; 44] {
-        let mut buf = [0u8; 44];
-        buf[..32].copy_from_slice(&self.content_id);
-        buf[32..40].copy_from_slice(&self.total_out.to_le_bytes());
-        buf[40..44].copy_from_slice(&self.leg_count.to_le_bytes());
-        buf
-    }
-}
-
 #[derive(Debug, PartialEq, Eq)]
 pub enum PayProofError {
-    FoldFailed,
-    DecideFailed,
-    VerifyFailed,
+    /// A signal without links has nothing to pay.
     Empty,
+    /// A leg or the total is above [`MAX_PAY_AMOUNT`].
+    Overflow,
+    Proof(proof::ProofError),
 }
 
-/// Prove a pay Intent: fold one conservation-binding step, decide.
-pub fn prove_pay(stmt: &PayStatement) -> Result<Proof, PayProofError> {
-    let acc = pay_acc(stmt)?;
-    decide(&acc, &stmt.to_zheng(), &ProofParams::default()).map_err(|_| PayProofError::DecideFailed)
-}
-
-/// Verify a pay proof against the public pay statement.
-///
-/// The prover is deterministic (Fiat-Shamir, one hashed step), so the
-/// verifier re-folds the accumulator from the statement, runs zheng's
-/// verifier on the given proof against it, and additionally requires the
-/// proof to match what an honest prover emits for this statement.
-pub fn verify_pay(proof: &Proof, stmt: &PayStatement) -> bool {
-    let Ok(acc) = pay_acc(stmt) else {
-        return false;
-    };
-    let Ok(expected) = decide(&acc, &stmt.to_zheng(), &ProofParams::default()) else {
-        return false;
-    };
-    proof.commitment.as_bytes() == expected.commitment.as_bytes()
-        && proof.eval_value == expected.eval_value
-        && step::verify_group(&acc, proof, &stmt.to_zheng())
-}
-
-/// The one-step accumulator of a pay statement.
-fn pay_acc(stmt: &PayStatement) -> Result<Accumulator, PayProofError> {
-    if stmt.leg_count == 0 {
-        return Err(PayProofError::Empty);
+impl std::fmt::Display for PayProofError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Empty => f.write_str("pay proof over a signal without links"),
+            Self::Overflow => f.write_str("pay leg or total above the pay proof range"),
+            Self::Proof(e) => write!(f, "pay proof rejected: {e:?}"),
+        }
     }
-    let mut acc = step::blank_acc();
-    let witness = step::add_step(&stmt.material());
-    let mut t = Transcript::new();
-    fold(&mut acc, step::instance(), &witness, &mut t).map_err(|_| PayProofError::FoldFailed)?;
-    Ok(acc)
+}
+
+impl std::error::Error for PayProofError {}
+
+impl PayStatement {
+    /// The statement of a pay signal: its content id, leg count and total.
+    pub fn of(signal: &Signal) -> Result<Self, PayProofError> {
+        if signal.links.is_empty() {
+            return Err(PayProofError::Empty);
+        }
+        let mut total = 0u64;
+        for l in &signal.links {
+            total = total
+                .checked_add(l.amount)
+                .filter(|&t| l.amount <= MAX_PAY_AMOUNT && t <= MAX_PAY_AMOUNT)
+                .ok_or(PayProofError::Overflow)?;
+        }
+        Ok(Self {
+            content_id: signal.content_id(),
+            total_out: total,
+            leg_count: u32::try_from(signal.links.len()).map_err(|_| PayProofError::Overflow)?,
+        })
+    }
+}
+
+/// The relation of one pay signal.
+struct PayRelation<'a> {
+    signal: &'a Signal,
+    statement: PayStatement,
+}
+
+/// Columns per leg: amount, its bits, running total, its bits.
+const PER_LEG: usize = 2 * (1 + AMOUNT_BITS);
+const TOTAL: usize = 1;
+
+fn leg_amount(j: usize) -> usize {
+    2 + j * PER_LEG
+}
+fn leg_sum(j: usize) -> usize {
+    leg_amount(j) + 1 + AMOUNT_BITS
+}
+
+fn bits_after(col: usize) -> Vec<usize> {
+    (col + 1..=col + AMOUNT_BITS).collect()
+}
+
+impl Relation for PayRelation<'_> {
+    fn statement(&self) -> [u8; 32] {
+        let s = &self.statement;
+        digest(
+            STATEMENT_DOMAIN,
+            &[&s.content_id, &s.total_out.to_le_bytes(), &s.leg_count.to_le_bytes()],
+        )
+    }
+
+    fn instance(&self) -> CCSInstance {
+        let legs = self.statement.leg_count as usize;
+        let mut cs = R1cs::new(2 + legs * PER_LEG);
+        for j in 0..legs {
+            cs.packs(leg_amount(j), &bits_after(leg_amount(j)));
+            cs.packs(leg_sum(j), &bits_after(leg_sum(j)));
+            let mut step = vec![(leg_sum(j), F::ONE), (leg_amount(j), -F::ONE)];
+            if j > 0 {
+                step.push((leg_sum(j - 1), -F::ONE));
+            }
+            cs.zero(step);
+        }
+        cs.zero(vec![(leg_sum(legs - 1), F::ONE), (TOTAL, -F::ONE)]);
+        cs.instance()
+    }
+
+    fn public(&self) -> Vec<(usize, F)> {
+        vec![(TOTAL, F::new(self.statement.total_out))]
+    }
+
+    fn check_witness(&self, z: &[F]) -> bool {
+        self.signal
+            .links
+            .iter()
+            .enumerate()
+            .all(|(j, l)| z.get(leg_amount(j)) == Some(&F::new(l.amount)))
+    }
+}
+
+impl Witnessed for PayRelation<'_> {
+    fn witness(&self) -> Option<CCSWitness> {
+        let mut z = vec![F::ZERO; self.instance().num_cols];
+        z[0] = F::ONE;
+        z[TOTAL] = F::new(self.statement.total_out);
+        let mut sum = 0u64;
+        for (j, l) in self.signal.links.iter().enumerate() {
+            sum = sum.checked_add(l.amount)?;
+            for (col, value) in [(leg_amount(j), l.amount), (leg_sum(j), sum)] {
+                z[col] = F::new(value);
+                for (k, bit) in bits_after(col).into_iter().enumerate() {
+                    z[bit] = F::new((value >> k) & 1);
+                }
+            }
+        }
+        Some(CCSWitness { z })
+    }
+}
+
+/// Prove a pay signal's conservation claim. Attach the result as
+/// `signal.proof`; `content_id` does not cover the proof.
+pub fn prove_pay(signal: &Signal) -> Result<Proof, PayProofError> {
+    let statement = PayStatement::of(signal)?;
+    proof::prove(&PayRelation { signal, statement }).map_err(PayProofError::Proof)
+}
+
+/// Verify a pay proof against the signal it pays for.
+pub fn verify_pay(proof: &Proof, signal: &Signal) -> bool {
+    check_pay(proof, signal).is_ok()
+}
+
+/// [`verify_pay`] with the reason a proof is rejected.
+pub fn check_pay(proof: &Proof, signal: &Signal) -> Result<(), PayProofError> {
+    let statement = PayStatement::of(signal)?;
+    proof::verify(&PayRelation { signal, statement }, proof).map_err(PayProofError::Proof)
+}
+
+/// Admission check of a signal's proof field. A signal without a proof
+/// passes; a signal with one must carry a valid pay proof of itself — the
+/// only statement a signal proof makes today.
+pub fn check_signal_proof(signal: &Signal) -> Result<(), PayProofError> {
+    match &signal.proof {
+        None => Ok(()),
+        Some(proof) => check_pay(proof, signal),
+    }
 }
 
 /// Hash nullifiers for finality / content binding.
@@ -116,64 +204,10 @@ pub fn nullifier_set_hash(nullifiers: &[Particle]) -> Particle {
     for n in nullifiers {
         buf.extend_from_slice(n);
     }
-    let h = hemera_hash(&buf);
+    let h = cyber_hemera::hash(&buf);
     *h.as_bytes().first_chunk::<32>().unwrap_or(&[0u8; 32])
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn prove_and_verify_pay() {
-        let stmt = PayStatement {
-            content_id: [3u8; 32],
-            total_out: 150,
-            leg_count: 2,
-        };
-        let proof = prove_pay(&stmt).unwrap();
-        assert!(verify_pay(&proof, &stmt));
-    }
-
-    #[test]
-    fn verify_rejects_wrong_content() {
-        let stmt = PayStatement {
-            content_id: [3u8; 32],
-            total_out: 150,
-            leg_count: 2,
-        };
-        let proof = prove_pay(&stmt).unwrap();
-        let bad = PayStatement {
-            content_id: [4u8; 32],
-            total_out: 150,
-            leg_count: 2,
-        };
-        assert!(!verify_pay(&proof, &bad));
-    }
-
-    #[test]
-    fn verify_rejects_wrong_amount() {
-        let stmt = PayStatement {
-            content_id: [3u8; 32],
-            total_out: 150,
-            leg_count: 2,
-        };
-        let proof = prove_pay(&stmt).unwrap();
-        let bad = PayStatement {
-            content_id: [3u8; 32],
-            total_out: 151,
-            leg_count: 2,
-        };
-        assert!(!verify_pay(&proof, &bad));
-    }
-
-    #[test]
-    fn empty_pay_errors() {
-        let stmt = PayStatement {
-            content_id: [1u8; 32],
-            total_out: 0,
-            leg_count: 0,
-        };
-        assert_eq!(prove_pay(&stmt).unwrap_err(), PayProofError::Empty);
-    }
-}
+#[path = "pay_proof_tests.rs"]
+mod tests;
