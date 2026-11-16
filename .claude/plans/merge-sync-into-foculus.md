@@ -25,7 +25,7 @@ rewire dependents (crate rename in the same commit — the "eat the cost" the us
 - cybergraph/Cargo.toml, cybergraph/cli/Cargo.toml, cyb/core/Cargo.toml: `cyber-sync {path=../sync}` → `foculus {path=../foculus}`
 - cybergraph/src/lib.rs, cybergraph/src/api.rs, cybergraph/cli/src/main.rs, cyb/core/src/cell.rs: `use cyber_sync` → `use foculus`
 
-markdown project references → foculus (8 files, 5 repos): honeycrisp/acpu/README, cybergraph/specs/cli, bbg/specs/cli, soft3/{roadmap/component-boundaries, roadmap/stack-completeness, specs/terms, proposals/cybergraph-sync-tape-architecture}, go-cyber/docs/upgrade-plan. per-file judgment — change crate/path/project refs, not the word "sync" where it means the general concept.
+markdown project references → foculus (8 files, 5 repos): honeycrisp/acpu/README, cybergraph/specs/cli, bbg/specs/cli, soft3/{roadmap/component-boundaries, roadmap/stack-completeness, specs/terms, projects/cybergraph-sync-tape-architecture}, go-cyber/docs/upgrade-plan. per-file judgment — change crate/path/project refs, not the word "sync" where it means the general concept.
 
 ## order (build-verify before the irreversible step)
 
