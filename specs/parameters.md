@@ -39,7 +39,7 @@ the one real measurement in this repo: bostrom's empirical $\kappa=0.74,\lambda_
 | $T_{\min}$ | per-signal VDF delay ([[vec]] P6) | undetermined -- referenced symbolically everywhere, no value chosen | -- |
 | $T_{\text{beacon}}$ | outer beacon VDF delay ([[foculus beacon]]) | undetermined; beacon.md states only the design constraint (exceeds the settle decision window, fits inside the epoch) | 10s in `docs/explanation/life-of-a-signal.md`'s conservative walkthrough, explicitly illustrative |
 | $\Delta$ | network jitter bound | illustrative-only, reused consistently | $0.4\text{s}$ |
-| propose / beacon / settle / fold / tok window lengths | epoch phase durations | explicitly undetermined -- [[foculus beacon]] states epoch length is decided elsewhere; `life-of-a-signal.md` frames its numbers (85s conservative, ~25s tuned) as a worked illustration of the tradeoff, not a proposal | see that document's table |
+| propose / beacon / settle / fold / tok window lengths | epoch phase durations | explicitly undetermined -- [[foculus beacon]] states epoch length is decided elsewhere; `life-of-a-signal.md` frames its numbers (85s conservative, ~25s tuned) as a worked illustration of the tradeoff, not a project | see that document's table |
 | $q$ | support-switching rate (protocol step 4, new in this pass) | undetermined -- introduced by [[foculus security at scale]] theorem T1, no value chosen; T1's own liveness bound is stated in terms of $q$, not with $q$ resolved to a number | -- |
 
 ## precision and depth

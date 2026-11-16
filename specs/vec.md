@@ -169,7 +169,7 @@ each removal loses a property the other two cannot provide. the three core prope
 
 ## algebraic NMT optimization
 
-the [[algebraic-nmt]] proposal replaces NMT trees with polynomial commitments:
+the [[algebraic-nmt]] project replaces NMT trees with polynomial commitments:
 
 ```
 current (NMT + CRDT):
@@ -242,4 +242,4 @@ the complete optimization path: nebu provides fast field ops, hemera uses them f
 
 this bidirectional optimization is why the stack exists as separate repos -- each layer can be improved independently while the interfaces remain stable. a 2x improvement in [[Hemera]] permutation speed cascades to 2x faster NMT updates, 2x faster proof generation, 2x faster state transitions. a 33x reduction in NMT constraints (algebraic NMT) cascades to 33x cheaper cyberlinks, 33x more throughput, 33x lower per-signal cost.
 
-see [[structural sync]] for the five-layer theory. see [[cyb/fs/sync]] for the unified patch+sync specification. see [[bostrom-to-onnx-pipeline]] for how graph structure compiles into transformer parameters. see [[algebraic-nmt]] for the polynomial NMT proposal. see [[spectral gap from convergence]] for the empirical observation that convergence is faster than predicted
+see [[structural sync]] for the five-layer theory. see [[cyb/fs/sync]] for the unified patch+sync specification. see [[bostrom-to-onnx-pipeline]] for how graph structure compiles into transformer parameters. see [[algebraic-nmt]] for the polynomial NMT project. see [[spectral gap from convergence]] for the empirical observation that convergence is faster than predicted

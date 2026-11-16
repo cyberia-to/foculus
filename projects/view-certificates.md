@@ -1,5 +1,5 @@
 ---
-tags: foculus, consensus, proposal
+tags: foculus, consensus, project
 crystal-type: process
 crystal-domain: cyber
 status: draft
