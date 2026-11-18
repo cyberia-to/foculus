@@ -787,9 +787,11 @@ mod node {
         Ls,
         /// Show status.
         Status,
-        /// Add a peer by node ID.
+        /// Add a peer by its full EndpointAddr JSON (the `addr:` line a node
+        /// prints on startup). A bare endpoint id is refused: with no mDNS and
+        /// relays disabled, nothing is left to resolve one through.
         AddPeer {
-            node_id: String,
+            addr: String,
             #[arg(short, long, default_value = "0")]
             capacity: String,
         },
@@ -849,9 +851,9 @@ mod node {
                 println!("chunks: {chunks}");
                 println!("erasure: k={}, n={}", args.k, args.n);
             }
-            NodeCommand::AddPeer { node_id, capacity } => {
+            NodeCommand::AddPeer { addr, capacity } => {
                 let cap = parse_capacity(&capacity)?;
-                node.add_peer(&node_id, cap).await?;
+                node.add_peer(&addr, cap).await?;
             }
             NodeCommand::Sync { peer } => {
                 if let Some(p) = peer {
