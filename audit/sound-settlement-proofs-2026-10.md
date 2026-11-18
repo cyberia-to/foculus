@@ -52,13 +52,17 @@ one enum; a succinct or accumulated profile is a new variant behind the same
 | settle receipt | claims_root, Δφ⁺ of the claim set, shares from the verified accumulator (or the Monte-Carlo samples), receipt hash, target = protocol target | via the cluster | via the tickets | `settle_tickets::verify_settlement` |
 | epoch certificate | hash, tip grade, beacon VDF, claims root; fails closed when a bound part lacks inputs | via the receipt | — | `verify_epoch_cert`, `verify_epoch_cert_with_phi` |
 | φ* | graph commitment over (T, S, degree, teleport, weights), φ₀ hash, `iterations` tri-kernel steps, φ* hash | — (a v3 certificate of the SpMV rows checks the same products at more bytes) | — | `phi::{compute_phi_star, verify_phi_claim}` |
-| pay σ: the signal's legs sum to `total_out` as integers | `content_id`, leg count, total from the signal | each leg and running total packed into 62 boolean bits, `s_j = s_{j−1} + a_j`, `s_{L−1} = total` (pinned) — no wrap mod p | legs equal the signal's link amounts | `pay_proof::{prove_pay, verify_pay}` (take the signal) |
+| pay σ: the signal's legs sum to `total_out` as integers | `content_id`, leg count, total from the signal | each leg and running total packed into 62 boolean bits, `s_j = s_{j−1} + a_j`, `s_{L−1} = total` (pinned) — no wrap mod p; since `feat/device-profile-choice` each leg is pinned to its link amount too (`PayRelation::public`, `src/pay_proof.rs:150`), so the relation is closed | — (was: legs equal the signal's link amounts, checked natively; the pins carry it now) | `pay_proof::{prove_pay, verify_pay}` (take the signal) |
 | tip: the root is the last step of the chain a trusted head commits to | `head_i = H(head_{i−1}‖height‖root‖leaves)`, heights strictly increasing | — | — | `tip::{TipChain, Tip::join_chain, advance_chain}` |
 | signal proof field | codec v2: profile byte, statement, canonical certificate values; v1 decoded only without a proof | — | — | `signal_codec` |
 
 `tests/no_legacy_zheng.rs` fails if any `zheng::…` path in `src` is outside the
 allow-list (`execution::Certificate`, `execution::certificate`, CCS types, phi
-graph types); the φ* differential test may call `prove_phi_star`.
+graph types); the φ* differential test may call `prove_phi_star`. Since
+`feat/device-profile-choice` the list is the one in that file
+(`tests/no_legacy_zheng.rs:10-19`): the phi graph types are gone with foculus's
+own `SparseGraph`, `execution::succinct` and the two `envelope` items are in
+for profile 1, and there is no test-only exception left.
 
 ## 3. what cannot be made better than this without the later packages
 
@@ -77,8 +81,10 @@ Plainly:
 - Tip: the chain proves only that the root is the chain's last step. That each
   root is a valid transition from the one before needs a bbg transition
   relation and accumulation (phase 3). Light join is linear: one hemera per step.
-- Pay: legs are disclosed and bound to `content_id` natively; hiding them needs
-  the zk profile and hemera-over-bytes in-circuit.
+- Pay: legs are disclosed and bound to `content_id` — natively when this was
+  written, as pinned public coordinates of the relation since
+  `feat/device-profile-choice` (`audit/device-profile-choice-2026-10.md`);
+  hiding them needs the zk profile and hemera-over-bytes in-circuit.
 - φ*: recomputation; a succinct φ* needs the tri-kernel as an accumulated step
   relation.
 

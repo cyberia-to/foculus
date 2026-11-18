@@ -1,3 +1,5 @@
+use foculus::pay_proof::PayRelation;
+use foculus::proof::{PROFILE_SUCCINCT, RelationKey, prove_succinct};
 use foculus::signal_codec::{self as codec, ErrorKind, decode_signal, encode_signal, proof_hash};
 use foculus::{BoxMoveRecord, CyberlinkRecord, Proof, PublicProof, Signal};
 use zheng::execution::Certificate;
@@ -241,4 +243,30 @@ fn a_real_pay_proof_verifies_after_signal_roundtrip() {
     let mut other = decoded.clone();
     other.links[1].amount = 71;
     assert!(!foculus::verify_pay(decoded.proof.as_ref().unwrap(), &other));
+}
+
+/// A signal carries the pay σ, chosen to stay in the public profile: the
+/// encoder refuses a profile-1 proof rather than write a body no decoder
+/// reads (`src/signal_codec/proof.rs`).
+#[test]
+fn a_profile_one_proof_on_a_signal_is_refused() {
+    let mut signal = empty();
+    signal.links = vec![CyberlinkRecord {
+        neuron: [1; 32],
+        from: [1; 32],
+        to: [4; 32],
+        token: [5; 32],
+        amount: 70,
+        valence: 1,
+        height: 0,
+    }];
+    let relation = PayRelation::of(&signal).unwrap();
+    let key = RelationKey::new(&relation).unwrap();
+    let succinct = prove_succinct(&key, &relation).unwrap();
+    assert_eq!(succinct.profile(), PROFILE_SUCCINCT);
+    signal.proof = Some(succinct);
+    assert!(matches!(
+        encode_signal(&signal),
+        Err(codec::CodecError { kind: ErrorKind::UnsupportedProof, .. })
+    ));
 }

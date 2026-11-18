@@ -10,17 +10,20 @@
 //!
 //! ```text
 //! content_id = S.content_id()                        statement check
+//! a_j = S.links[j].amount                             relation, legs pinned
 //! a_j < 2^62,  s_j = s_{j−1} + a_j < 2^62,  s_{−1}=0  relation (CCS)
 //! s_{L−1} = total_out                                 relation, total pinned
-//! a_j = S.links[j].amount                             witness check
 //! ```
 //!
 //! The range checks make the field sum an integer sum: no leg or running
 //! total can wrap the Goldilocks modulus, so `total_out` is the amount that
-//! leaves. Legs and running sums are the witness — disclosed today, the
-//! part a zero-knowledge profile hides. Binding legs to `content_id` is the
-//! witness check, native because no CCS for hemera over the signal bytes
-//! exists here; the verifier therefore needs the signal itself.
+//! leaves. The legs are the signal's own link amounts, public on the wire,
+//! so they are pinned coordinates: the verifier places them from the
+//! signal it holds and the relation is closed (no native witness check).
+//! The witness is the bits and the running sums. Both proof profiles are
+//! sound for it; pay stays in the public profile by measurement
+//! (`audit/device-profile-choice-2026-10.md`: at every leg count the v3
+//! certificate is smaller to verify and to send than a profile-1 proof).
 
 use nebu::Goldilocks as F;
 use zheng::types::{CCSInstance, CCSWitness};
@@ -92,9 +95,16 @@ impl PayStatement {
 }
 
 /// The relation of one pay signal.
-struct PayRelation<'a> {
+pub struct PayRelation<'a> {
     signal: &'a Signal,
     statement: PayStatement,
+}
+
+impl<'a> PayRelation<'a> {
+    /// The relation a verifier derives from `signal`.
+    pub fn of(signal: &'a Signal) -> Result<Self, PayProofError> {
+        Ok(Self { signal, statement: PayStatement::of(signal)? })
+    }
 }
 
 /// Columns per leg: amount, its bits, running total, its bits.
@@ -138,15 +148,13 @@ impl Relation for PayRelation<'_> {
     }
 
     fn public(&self) -> Vec<(usize, F)> {
-        vec![(TOTAL, F::new(self.statement.total_out))]
+        core::iter::once((TOTAL, F::new(self.statement.total_out)))
+            .chain(self.signal.links.iter().enumerate().map(|(j, l)| (leg_amount(j), F::new(l.amount))))
+            .collect()
     }
 
-    fn check_witness(&self, z: &[F]) -> bool {
-        self.signal
-            .links
-            .iter()
-            .enumerate()
-            .all(|(j, l)| z.get(leg_amount(j)) == Some(&F::new(l.amount)))
+    fn closed(&self) -> bool {
+        true
     }
 }
 

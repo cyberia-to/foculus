@@ -8,8 +8,11 @@
 use std::path::Path;
 
 const ALLOWED: &[&str] = &[
+    "zheng::envelope::AnySuccinct",
+    "zheng::envelope::succinct_proof_bytes",
     "zheng::execution::Certificate",
     "zheng::execution::certificate",
+    "zheng::execution::succinct",
     "zheng::types::CCSInstance",
     "zheng::types::CCSWitness",
     "zheng::types::SparseMatrix",
@@ -83,6 +86,21 @@ fn src_uses_no_legacy_zheng_api() {
         })
         .collect();
     assert!(bad.is_empty(), "legacy zheng API in foculus src: {bad:?}");
+}
+
+/// The resolved build: zheng's `legacy` feature is off for foculus and for
+/// every crate in its graph that depends on zheng (cargo unifies features,
+/// so one dependent enabling it would put the unsound API in the build).
+#[test]
+fn zheng_builds_without_the_legacy_feature() {
+    let out = std::process::Command::new(env!("CARGO"))
+        .args(["tree", "-e", "features", "-i", "zheng", "--offline", "--all-targets"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("cargo tree");
+    let tree = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success() && tree.contains("zheng v0.4"), "cargo tree: {tree}{}", String::from_utf8_lossy(&out.stderr));
+    assert!(!tree.contains("zheng feature \"legacy\""), "legacy enabled:\n{tree}");
 }
 
 #[test]

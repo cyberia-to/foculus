@@ -27,6 +27,10 @@ pub(super) fn encode(out: &mut Writer, proof: &Proof) -> Result<(), CodecError> 
             }
             Ok(())
         }
+        // Signals carry the pay σ, chosen to stay in the public profile
+        // (audit/device-profile-choice-2026-10.md); a profile-1 proof on a
+        // signal is refused rather than written in a form no decoder reads.
+        Proof::Succinct(_) => Err(out.error(ErrorKind::UnsupportedProof)),
     }
 }
 
