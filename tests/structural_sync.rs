@@ -5,9 +5,11 @@
 
 use std::time::Instant;
 
+use foculus::chain::{self, ChainError, Signal, SignalChain};
 use foculus::erasure;
 use foculus::das;
 use foculus::store::{self, FileEntry, GSet};
+use foculus::vdf;
 
 // ═══════════════════════════════════════════════════════════════════
 // LAYER 4: ERASURE CODING — every (k,n) config, every shard subset
@@ -203,8 +205,121 @@ fn das_sampling_honest_vs_tampered() {
     }
 }
 
-// Layer 2 ordering (VDF, hash chain, equivocation detection) is owned by
-// cybergraph, not cyb/sync. Tests for those properties live in cybergraph.
+// ══════════════════════════════════════════════════════════════════
+// LAYER 2: ORDERING — hash chain, step counter, equivocation, VDF
+// ══════════════════════════════════════════════════════════════════
+//
+// foculus owns layer 2 (specs/structural-sync.md § the table): `chain` is the
+// per-neuron hash chain with its step counter and equivocation rule, `vdf` the
+// delay primitive. cybergraph calls them at its `order` verb and reimplements
+// nothing, so the properties are exercised here.
+
+/// A chain accepts successive signals only when each names its predecessor.
+#[test]
+fn ordering_chain_appends_in_sequence() {
+    let n = test_neuron(1);
+    let mut chain = SignalChain::new();
+
+    let s0 = test_signal(n, 0, [0u8; 32]);
+    let h0 = s0.hash();
+    chain.append(s0).expect("genesis signal");
+
+    let s1 = test_signal(n, 1, h0);
+    let h1 = s1.hash();
+    chain.append(s1).expect("second signal");
+
+    let s2 = test_signal(n, 2, h1);
+    chain.append(s2).expect("third signal");
+
+    assert_eq!(chain.entries.len(), 3);
+    assert_eq!(chain.entries[&1].prev, h0);
+    assert_eq!(chain.entries[&2].prev, h1);
+}
+
+/// A signal whose `prev` is not the predecessor's hash is rejected, and the
+/// chain is left untouched.
+#[test]
+fn ordering_prev_mismatch_is_rejected() {
+    let n = test_neuron(1);
+    let mut chain = SignalChain::new();
+    chain.append(test_signal(n, 0, [0u8; 32])).expect("genesis signal");
+
+    let forged = test_signal(n, 1, [0xAB; 32]);
+    assert!(matches!(chain.append(forged), Err(ChainError::PrevMismatch)));
+    assert_eq!(chain.entries.len(), 1);
+
+    // Out-of-order step is rejected too: step 3 on a chain of length 1.
+    let skipped = test_signal(n, 3, chain.entries[&0].hash());
+    assert!(matches!(
+        chain.append(skipped),
+        Err(ChainError::StepNotSequential)
+    ));
+    assert_eq!(chain.entries.len(), 1);
+}
+
+/// Two signals of one neuron at the same step on the same `prev` are
+/// equivocation: the second is refused and the first stands. Divergent
+/// payloads at the same chain position get distinct content ids, which is how
+/// fork-choice tells them apart.
+#[test]
+fn ordering_equivocation_is_detected() {
+    let n = test_neuron(1);
+    let mut chain = SignalChain::new();
+    let h0 = test_signal(n, 0, [0u8; 32]).hash();
+    chain.append(test_signal(n, 0, [0u8; 32])).expect("genesis signal");
+
+    let mut a = test_signal(n, 1, h0);
+    a.delta_pi = vec![([1u8; 32], 10)];
+    let mut b = test_signal(n, 1, h0);
+    b.delta_pi = vec![([1u8; 32], 20)];
+
+    // Same chain position, different payloads.
+    assert_eq!(a.hash(), b.hash());
+    assert_ne!(a.content_id(), b.content_id());
+
+    chain.append(a).expect("first successor");
+    assert!(matches!(chain.append(b), Err(ChainError::Equivocation)));
+    assert_eq!(chain.entries.len(), 2);
+}
+
+/// The delay primitive is sequential and verified by recomputation: an honest
+/// proof verifies, a tampered one does not, and T steps compose.
+#[test]
+fn ordering_vdf_verifies_and_composes() {
+    let challenge = vdf::challenge_from_hash(&[0x5A; 32]);
+    let proof = vdf::evaluate(challenge, 512);
+    assert!(vdf::verify(&proof));
+
+    let mut tampered = proof.clone();
+    tampered.output ^= 1;
+    assert!(!vdf::verify(&tampered));
+
+    let mut relabelled = proof.clone();
+    relabelled.iterations += 1;
+    assert!(!vdf::verify(&relabelled));
+
+    // 512 steps from the output of 512 steps == 1024 steps from the input.
+    let composed = vdf::evaluate(proof.output, 512);
+    assert_eq!(composed.output, vdf::evaluate(challenge, 1024).output);
+}
+
+fn test_neuron(seed: u8) -> [u8; 32] {
+    [seed; 32]
+}
+
+fn test_signal(neuron: [u8; 32], step: u64, prev: [u8; 32]) -> Signal {
+    Signal {
+        neuron,
+        network: chain::SELF_NETWORK,
+        links: vec![],
+        delta_pi: vec![],
+        box_moves: vec![],
+        prev,
+        step,
+        height: 0,
+        proof: None,
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // LAYER 3: COMPLETENESS — Merkle root

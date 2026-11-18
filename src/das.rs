@@ -81,6 +81,12 @@ pub fn verify_sample(sample: &Sample, commitment: &DasCommitment) -> bool {
 
 /// Verify availability by checking multiple random samples.
 /// Returns (passed, total) — how many samples verified.
+///
+/// `passed` is the confidence: an adversary withholding at least half the
+/// shards survives k independent honest samples with probability 2^-k, so k
+/// passing samples mean availability with confidence 1 - 2^-k. The count is
+/// the exponent, and the caller compares counts; nothing here turns it into
+/// a float (specs/erasure.md).
 pub fn verify_availability(
     samples: &[Sample],
     commitment: &DasCommitment,
@@ -92,12 +98,6 @@ pub fn verify_availability(
         }
     }
     (passed, samples.len())
-}
-
-/// Confidence level for k successful samples out of k attempts.
-/// 1 - (1/2)^k assuming adversary withholds >50%.
-pub fn confidence(successful_samples: usize) -> f64 {
-    1.0 - 0.5_f64.powi(successful_samples as i32)
 }
 
 /// Serialize a shard's field elements to bytes for hashing.
@@ -147,13 +147,6 @@ mod tests {
             s.shard_data[0] ^= 0xFF;
         }
         assert!(!verify_sample(&s, &commitment));
-    }
-
-    #[test]
-    fn confidence_calculation() {
-        assert!(confidence(20) > 0.999999);
-        assert!(confidence(30) > 0.999999999);
-        assert!((confidence(1) - 0.5).abs() < 1e-10);
     }
 
     #[test]

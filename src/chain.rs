@@ -1,14 +1,14 @@
 // ---
-// tags: sync, rust
+// tags: foculus, rust
 // crystal-type: source
 // crystal-domain: cyber
 // ---
 //! Signal chain: neuron-signed cyberlink batches with equivocation detection.
 //!
 //! Implements layer 2 ordering from structural-sync: per-neuron hash chain,
-//! step counter, and equivocation detection. Lives in the sync repo because
-//! ordering is a sync-protocol concern; cybergraph imports these types when
-//! validating a submit.
+//! step counter, and equivocation detection. foculus owns ordering; cybergraph
+//! re-exports these types and calls them at its `order` verb, never
+//! reimplements them (see specs/structural-sync.md § repo boundaries).
 
 use std::collections::BTreeMap;
 
