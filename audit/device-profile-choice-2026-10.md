@@ -24,8 +24,14 @@ only `default` — no `legacy` anywhere in the graph (now a test,
 `tests/no_legacy_zheng.rs::zheng_builds_without_the_legacy_feature`).
 Apple M4 Max, rustc 1.95.0, `--release`. **Load average 25–32 from other
 agents during the runs**; profile-1 grinding (16 bits) adds variance.
-Command: `ZHENG_BACKEND={cpu,metal} cargo run --release --example
-device_profiles` (`DP_REPS=5`, medians).
+Command: `cargo run --release --example device_profiles` (`DP_REPS=5`,
+medians). The example installs no device backend — foculus declares no
+dependency on `cyber-lens-gpu`, which lives on lens `release/0.2` alone,
+so that foculus's own check and test runs need no lens GPU checkout. The
+Metal columns here were taken on the stand with that crate added to
+`[dev-dependencies]` locally and `cyber_lens_gpu::install` called at the
+top of `main` (the example's module doc carries the two lines); the CPU
+columns are what the example prints as it stands.
 
 ## what changed in code
 

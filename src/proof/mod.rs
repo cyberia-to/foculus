@@ -194,7 +194,12 @@ pub fn verify<R: Relation>(relation: &R, proof: &Proof) -> Result<(), ProofError
 }
 
 /// [`verify`] with a held key for the relation's shape: the relation is not
-/// recompiled for a profile-1 proof. A key of another shape is refused.
+/// recompiled for a profile-1 proof. Nothing here compares the key's
+/// compiled instance with `relation`: the caller is trusted to hold a key
+/// of this relation's shape. A key whose pins differ in count or position
+/// is refused, and a key of any other relation makes the proof fail, since
+/// the key's digest is absorbed by the transcript the proof was made
+/// under.
 pub fn verify_with_key<R: Relation>(key: &RelationKey, relation: &R, proof: &Proof) -> Result<(), ProofError> {
     match proof {
         Proof::Public(_) => verify(relation, proof),
@@ -251,9 +256,12 @@ impl RelationKey {
         self.vars
     }
 
-    /// The relation's pins, `(0, 1)` first, if `relation` has this key's
-    /// shape. The instance is compared by digest only when the caller did
-    /// not hold the key for this exact shape (positions differ → refused).
+    /// The relation's pins, `(0, 1)` first. Only the pin count and the pin
+    /// positions are compared with the key's: the compiled instance is not,
+    /// so this does not by itself establish that the key is this relation's.
+    /// What binds the two is the key's relation digest inside the transcript
+    /// (`Self::transcript`), which makes a proof produced under any other
+    /// key fail.
     fn pins<R: Relation>(&self, relation: &R) -> Result<Vec<(usize, F)>, ProofError> {
         if !relation.closed() {
             return Err(ProofError::NotClosed);

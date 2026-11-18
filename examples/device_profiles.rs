@@ -3,9 +3,17 @@
 //! witness, `device_params`, held key) — measured on one backend.
 //!
 //! ```text
-//! ZHENG_BACKEND=cpu   cargo run --release --example device_profiles
-//! ZHENG_BACKEND=metal cargo run --release --example device_profiles
+//! cargo run --release --example device_profiles
 //! ```
+//!
+//! It runs on lens's own backend, the CPU one: foculus declares no
+//! dependency on `cyber-lens-gpu`, which lives on lens `release/0.2` alone,
+//! so that no `cargo check`/`cargo test` of foculus needs that checkout.
+//! The Metal columns of `audit/device-profile-choice-2026-10.md` were
+//! measured with one line added to `[dev-dependencies]` locally —
+//! `cyber-lens-gpu = { version = "0.1", path = "../lens/gpu", features =
+//! ["metal"] }` — and `cyber_lens_gpu::install(Choice::Metal)` called at the
+//! top of `main`.
 //!
 //! `DP_REPS` (default 5) repetitions, median reported, times in ms.
 //! Columns: `cold` = key derivation + prove (a device's first proof of the
@@ -165,11 +173,12 @@ fn nox_hash_row(name: &str, n: usize, native_us: f64) {
 
 fn main() {
     let backend = std::env::var("ZHENG_BACKEND").unwrap_or_else(|_| "cpu".into());
-    let (name, device) = backend
-        .parse::<cyber_lens_gpu::Choice>()
-        .and_then(cyber_lens_gpu::install)
-        .unwrap_or_else(|e| panic!("ZHENG_BACKEND: {e}"));
-    println!("backend: {name} ({device}), reps {}", reps());
+    assert_eq!(
+        backend, "cpu",
+        "ZHENG_BACKEND={backend}: this example installs no device backend — see the module doc for the Metal run"
+    );
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+    println!("backend: cpu ({threads} threads), reps {}", reps());
 
     println!("\n## pay σ (closed relation: legs pinned from the signal)");
     println!("legs | native recompute us | v3 prove · verify ms · bytes | p1 vars | p1 cold · warm · verify ms · bytes");
