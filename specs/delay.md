@@ -15,7 +15,8 @@ foculus owns the primitive because every use of it is an ordering question — [
 | | |
 |---|---|
 | implemented | `src/vdf.rs` — `evaluate(input, iterations) → VdfProof`, `verify(proof)`, `challenge_from_hash(h)`: $T$ sequential squarings over Goldilocks, verified by recomputation |
-| gap | Goldilocks has known order, so repeated squaring in $\mathbb{F}_p$ is sequential work but **not** a VDF: verification costs as much as evaluation, and $x^{2^T}$ reduces to one exponentiation by $2^T \bmod (p-1)$. the group-of-unknown-order construction below is the specification; the code fixes the interface and the chain binding until it lands |
+| gap | Goldilocks has known order, so repeated squaring in $\mathbb{F}_p$ is sequential work but **not** a VDF: verification costs as much as evaluation, and $x^{2^T}$ reduces to one exponentiation by $2^T \bmod (p-1)$. the group-of-unknown-order construction below is the specification; the code fixes the interface until it lands |
+| gap | the chain binding is **not** in the tree. `chain::Signal` (`src/chain.rs`) carries no VDF field and `src/chain.rs` never calls `src/vdf.rs`; the only VDF input built anywhere is a signal counter (`src/live.rs`, `LiveSignal::vdf`), which commits to neither `prev` nor the body. the branch-bound input below is a target |
 | $T_{\min}$ | undetermined — see [[foculus/specs/parameters|parameters]] |
 
 ## interface
@@ -72,13 +73,13 @@ recommendation: option C (genies) or option A (class group). both transparent, n
 
 ## usage in foculus
 
-**signal rate limiting:**
+**signal rate limiting (target — see the gap row):**
 ```
 signal.vdf_proof = vdf_prove(H(prev_signal ‖ body), T_min)
 ```
-each signal requires `T_min` wall-clock time since its predecessor. flooding N signals costs N × T_min sequential time.
+once bound, each signal requires `T_min` wall-clock time since its predecessor, and flooding N signals costs N × T_min sequential time. nothing in the tree enforces this yet: no signal carries a VDF proof.
 
-**equivocation.** a VDF output is reusable for the same input and difficulty, so two signals on the same `prev` do *not* cost two evaluations — the earlier text that claimed "total VDF time exceeds elapsed time → detectable" was wrong (mudra audit, 2026-09-16). what makes a fork detectable is the chain rule in `src/chain.rs`: one accepted successor per `prev`, the duplicate is equivocation evidence. what makes a fork *costly* is the branch-bound input above — the VDF input commits to the signal body, not only to `prev`, so a second body needs a second evaluation.
+**equivocation.** a VDF output is reusable for the same input and difficulty, so two signals on the same `prev` do *not* cost two evaluations — the earlier text that claimed "total VDF time exceeds elapsed time → detectable" was wrong (mudra audit, 2026-09-16). what makes a fork detectable is the chain rule in `src/chain.rs`: one accepted successor per `prev`, the duplicate is equivocation evidence — that part is implemented and is the whole of the detection story today. what *would* make a fork costly is the branch-bound input above, a VDF input committing to the signal body and not only to `prev`, so that a second body needs a second evaluation. that binding is a target, and the selection rule between two VDF-valid successors is still open (see open questions); until both land, equivocation is detected but not priced.
 
 **physical time ordering:**
 between causally independent signals, VDF proofs create a partial physical-time ordering without any clock synchronization. the [[foculus beacon|beacon]] is the outer VDF over finalized signals.

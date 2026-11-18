@@ -234,6 +234,35 @@ mod tests {
     }
 
     #[test]
+    fn nmt_root_changes_on_modification() {
+        // collision sensitivity of the hemera node rule to leaf data alone:
+        // same namespaces, one leaf's data differs → a different root.
+        let l1 = vec![leaf(1, "1"), leaf(2, "2")];
+        let l2 = vec![leaf(1, "1"), leaf(2, "3")];
+        assert_ne!(build(&l1).hash, build(&l2).hash);
+    }
+
+    #[test]
+    fn nmt_forged_leaf_in_full_verify() {
+        // an extra leaf of the proved namespace that the tree does not contain.
+        let leaves = vec![leaf(1, "1"), leaf(2, "2")];
+        let mut proof = prove(&leaves, 1);
+        proof.leaves.push(leaf(1, "forged"));
+        assert!(!verify_full(&leaves, &proof));
+    }
+
+    #[test]
+    fn nmt_wrong_namespace_in_proof() {
+        // a leaf of another namespace smuggled into the run. the namespace of
+        // the proof stays inside the root's bounds, so the bounds check at the
+        // end of `verify` cannot fire: only the mismatch loop rejects this.
+        let leaves = vec![leaf(1, "1"), leaf(2, "2")];
+        let mut proof = prove(&leaves, 1);
+        proof.leaves.push(leaf(2, "2"));
+        assert!(!verify(&proof));
+    }
+
+    #[test]
     fn nmt_namespace_outside_bounds_rejected() {
         let leaves = vec![leaf(5, "1"), leaf(6, "2")];
         let mut proof = prove(&leaves, 5);

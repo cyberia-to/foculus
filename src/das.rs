@@ -81,6 +81,12 @@ pub fn verify_sample(sample: &Sample, commitment: &DasCommitment) -> bool {
 
 /// Verify availability by checking multiple random samples.
 /// Returns (passed, total) — how many samples verified.
+///
+/// `passed` is the confidence: an adversary withholding at least half the
+/// shards survives k independent honest samples with probability 2^-k, so k
+/// passing samples mean availability with confidence 1 - 2^-k. The count is
+/// the exponent, and the caller compares counts; nothing here turns it into
+/// a float (specs/erasure.md).
 pub fn verify_availability(
     samples: &[Sample],
     commitment: &DasCommitment,
@@ -92,15 +98,6 @@ pub fn verify_availability(
         }
     }
     (passed, samples.len())
-}
-
-/// Confidence in availability after `successful_samples` honest samples,
-/// as bits: an adversary withholding at least half the shards survives k
-/// random samples with probability 2^-k, so confidence = 1 - 2^-k. The
-/// exponent is the honest number; a float would hide it (and foculus does
-/// not decide anything in floating point).
-pub fn confidence_bits(successful_samples: usize) -> u32 {
-    u32::try_from(successful_samples).unwrap_or(u32::MAX)
 }
 
 /// Serialize a shard's field elements to bytes for hashing.
@@ -150,13 +147,6 @@ mod tests {
             s.shard_data[0] ^= 0xFF;
         }
         assert!(!verify_sample(&s, &commitment));
-    }
-
-    #[test]
-    fn confidence_calculation() {
-        assert_eq!(confidence_bits(20), 20);
-        assert_eq!(confidence_bits(1), 1);
-        assert_eq!(confidence_bits(0), 0);
     }
 
     #[test]

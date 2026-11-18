@@ -9,7 +9,9 @@
 //! Layer 2 ordering primitive, owned by foculus (specs/delay.md). Goldilocks
 //! has known order, so this is sequential work verified by recomputation, not
 //! a VDF in the cryptographic sense — the spec names the group-of-unknown-order
-//! construction that replaces it; the interface and the chain binding are fixed here.
+//! construction that replaces it. this module fixes the interface only: no
+//! signal binds a VDF output yet (`chain::Signal` carries no VDF field), and
+//! the branch-bound input is a target in specs/delay.md, not a property here.
 
 use nebu::Goldilocks;
 

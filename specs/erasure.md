@@ -15,7 +15,7 @@ foculus owns it because availability is a reconciliation property — "can every
 | | |
 |---|---|
 | implemented | `src/erasure.rs` — `encode(data, k, n) → Vec<Shard>`, `decode(shards, k, n, original_len) → Vec<u8>`: polynomial evaluation / interpolation over Goldilocks (nebu) |
-| implemented | `src/das.rs` — `commit(shards, k, len) → DasCommitment` (one hemera root per shard), `sample(shard)`, `verify_sample`, `verify_availability`, `confidence_bits(samples)` |
+| implemented | `src/das.rs` — `commit(shards, k, len) → DasCommitment` (one hemera root per shard), `sample(shard)`, `verify_sample`, `verify_availability` |
 | spec only | fraud proofs for invalid encodings, the 2D grid, Lens openings per cell |
 
 ## interface
@@ -29,8 +29,10 @@ decode(shards: &[Shard], k, n, len) → Vec<u8>   Lagrange interpolation over an
 commit(shards, k, len) → DasCommitment          hemera root per shard; the availability commitment
 sample(shard) → Sample                          one shard with its root
 verify_sample(sample, commitment) → bool
-verify_availability(commitment, samples, min) → bool
-confidence_bits(successful) → u32               withholding ≥ 50 % survives k honest samples with probability 2^−k
+verify_availability(samples, commitment) → (passed, total)
+  `passed` is the confidence: withholding ≥ 50 % of the shards survives k honest
+  samples with probability 2^−k, so k passing samples mean confidence 1 − 2^−k.
+  the count is the exponent; the caller compares counts, foculus computes no float.
 ```
 
 target (not built):
