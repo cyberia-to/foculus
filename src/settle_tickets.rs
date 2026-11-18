@@ -10,7 +10,9 @@
 //! accumulator is the sum over the accepted set; shares and the receipt
 //! follow from it. Verify: the same pipeline from public inputs — the
 //! budget, every ticket proof, the accumulator, the shares, the receipt
-//! hash. Nothing in a receipt is taken on the settler's word.
+//! hash. Nothing in a receipt is taken on the settler's word except its
+//! beacon, which [`verify_settlement`] reads as given and the caller binds
+//! (`verify_epoch_cert` against the certificate's own beacon artifact).
 
 use tru::{Context, FocusingParams, Link, impulse};
 
@@ -24,6 +26,12 @@ use crate::settlement::{self, Contribution};
 use crate::ticket_proof::{TicketInputs, prove_ticket};
 use crate::tickets::{ClusterAcc, ClusterId, grind_settlement};
 
+/// Protocol ceiling on the samples a receipt may ask a verifier to recompute.
+/// A Monte-Carlo receipt names its own sample count and verification costs
+/// that many impulse evaluations per contributor, so without a ceiling one
+/// gossiped receipt is unbounded work on every node that checks it.
+pub const DEFAULT_MAX_SAMPLES: u64 = 4096;
+
 /// Public inputs needed to verify a settle receipt.
 pub struct SettleVerifyInputs<'a> {
     pub base: &'a [Link],
@@ -35,6 +43,9 @@ pub struct SettleVerifyInputs<'a> {
     /// Protocol budget for the epoch: the receipt's own budget must equal it,
     /// or the settler would be minting a quantity nobody checked.
     pub budget: u64,
+    /// Protocol ceiling on the receipt's sample count, checked before any
+    /// recomputation. [`DEFAULT_MAX_SAMPLES`] unless the caller knows better.
+    pub max_samples: u64,
 }
 
 /// The public claim set a cluster settles over.
@@ -199,6 +210,9 @@ pub enum ReceiptError {
     Target,
     /// Receipt budget differs from the protocol budget.
     Budget,
+    /// Sample count above the protocol ceiling: the receipt asks for more
+    /// recomputation than a verifier will spend on it.
+    SampleCap,
     Cluster(ClusterError),
     /// Sample count differs from the accepted set.
     SampleCount,
@@ -206,14 +220,23 @@ pub enum ReceiptError {
     Shares,
 }
 
-/// Verify a receipt from public inputs: the budget, claims, Δφ⁺, every
-/// ticket proof (or the Monte-Carlo samples), the shares, the receipt hash.
+/// Verify a receipt from public inputs: the budget, the sample ceiling, the
+/// claims, Δφ⁺, every ticket proof (or the Monte-Carlo samples), the shares,
+/// the receipt hash.
+///
+/// The receipt's beacon is the one value read as given: it is public but
+/// nothing here fixes it, so a caller binds it — [`crate::epoch_cert::verify_epoch_cert`]
+/// against the certificate's own beacon artifact.
 pub fn verify_settlement(rec: &SettleReceipt, inp: &SettleVerifyInputs<'_>) -> Result<(), ReceiptError> {
     if !verify_receipt(rec) {
         return Err(ReceiptError::Malformed);
     }
     if rec.budget != inp.budget {
         return Err(ReceiptError::Budget);
+    }
+    // Before any recomputation: the receipt names how much work it costs.
+    if rec.sample_count > inp.max_samples {
+        return Err(ReceiptError::SampleCap);
     }
     let ids: Vec<[u8; 32]> = inp.claims.iter().map(|c| c.id).collect();
     if inp.claims.is_empty() || claims_root(&ids) != rec.claims_root {

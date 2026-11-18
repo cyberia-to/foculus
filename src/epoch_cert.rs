@@ -32,7 +32,7 @@ use crate::phi::{verify_phi_claim, PhiBinding, PhiGraph};
 use crate::rewards::SettleReceipt;
 use crate::tip::{Tip, TipTrust};
 
-pub use crate::settle_tickets::{verify_settlement, ReceiptError, SettleVerifyInputs};
+pub use crate::settle_tickets::{verify_settlement, ReceiptError, SettleVerifyInputs, DEFAULT_MAX_SAMPLES};
 
 /// Full epoch certificate for network consensus + optional settle.
 #[derive(Clone)]
@@ -251,6 +251,7 @@ mod tests {
             params: &FocusingParams::default(),
             target: easy_target(),
             budget: runner.budget,
+            max_samples: DEFAULT_MAX_SAMPLES,
         };
         assert!(verify_epoch_cert(&cert, Some(&inputs)));
         // a settling certificate without its inputs fails closed

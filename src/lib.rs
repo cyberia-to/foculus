@@ -70,7 +70,7 @@ pub use beacon::{
 pub use epoch::{verify_live_receipt, EpochError, EpochPhase, EpochRunner};
 pub use epoch_cert::{
     issue_epoch_cert, verify_epoch_cert, verify_epoch_cert_with_phi, EpochCertificate,
-    PhiVerifyInputs, ReceiptError, SettleVerifyInputs, verify_settlement,
+    PhiVerifyInputs, ReceiptError, SettleVerifyInputs, verify_settlement, DEFAULT_MAX_SAMPLES,
 };
 pub use cluster::{
     ClusterError, ClusterProof, accept_tickets, cluster_acc, redraw_peer, verify_cluster,

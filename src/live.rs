@@ -25,7 +25,7 @@ use tru::{Context, FocusingParams, Link};
 use crate::beacon::TEST_OUTER_T;
 use crate::epoch::{EpochPhase, EpochRunner};
 use crate::epoch_cert::{
-    issue_epoch_cert, verify_epoch_cert, EpochCertificate, SettleVerifyInputs,
+    issue_epoch_cert, verify_epoch_cert, EpochCertificate, SettleVerifyInputs, DEFAULT_MAX_SAMPLES,
 };
 use crate::rewards::{
     claim_from_links, share_of, verify_receipt, RewardClaim, TicketPolicy,
@@ -281,6 +281,7 @@ impl LiveNode {
             params: &params,
             target: easy_target(),
             budget: self.budget,
+            max_samples: DEFAULT_MAX_SAMPLES,
         };
         if !verify_epoch_cert(&cert, Some(&inputs)) {
             return Err(LiveError::CertInvalid);
@@ -323,6 +324,7 @@ impl LiveNode {
                 params: &params,
                 target: easy_target(),
                 budget: self.budget,
+                max_samples: DEFAULT_MAX_SAMPLES,
             };
             verify_epoch_cert(&cert, Some(&inputs))
         } else {

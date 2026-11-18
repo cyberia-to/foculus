@@ -41,7 +41,15 @@ fn verify(rec: &SettleReceipt, base: &[Link], claims: &[RewardClaim]) -> Result<
     let (ctx, params) = (Context::none(), FocusingParams::default());
     verify_settlement(
         rec,
-        &SettleVerifyInputs { base, claims, ctx: &ctx, params: &params, target: easy_target(), budget: BUDGET },
+        &SettleVerifyInputs {
+            base,
+            claims,
+            ctx: &ctx,
+            params: &params,
+            target: easy_target(),
+            budget: BUDGET,
+            max_samples: DEFAULT_MAX_SAMPLES,
+        },
     )
 }
 
@@ -116,4 +124,18 @@ fn monte_carlo_receipt_is_recomputed() {
     verify(&rec, &base(), &claims()).unwrap();
     let other = vec![Link::stake(h(1), h(3), 50)];
     assert!(verify(&rec, &other, &claims()).is_err());
+}
+
+/// A Monte-Carlo receipt names the work its verifier must redo, and nothing
+/// in the receipt hash binds that number: the protocol ceiling rejects it
+/// before the first ordering is drawn. Without the ceiling the second case
+/// recomputes until the node is killed.
+#[test]
+fn monte_carlo_sample_count_above_the_cap_is_rejected() {
+    let (ctx, params) = (Context::none(), FocusingParams::default());
+    let mut rec = settle_epoch(1, &GENESIS_PREV, &base(), &claims(), &ctx, &params, 16, BUDGET).unwrap();
+    rec.sample_count = DEFAULT_MAX_SAMPLES + 1;
+    assert_eq!(verify(&rec, &base(), &claims()), Err(ReceiptError::SampleCap));
+    rec.sample_count = u64::MAX;
+    assert_eq!(verify(&rec, &base(), &claims()), Err(ReceiptError::SampleCap));
 }

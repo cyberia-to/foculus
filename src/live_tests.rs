@@ -48,6 +48,7 @@ fn verifies_from_signals(node: &LiveNode, cert: &EpochCertificate) -> bool {
         params: &params,
         target: easy_target(),
         budget: node.budget,
+        max_samples: DEFAULT_MAX_SAMPLES,
     };
     verify_epoch_cert(cert, Some(&inputs))
 }
