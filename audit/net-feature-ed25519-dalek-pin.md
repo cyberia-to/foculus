@@ -1,3 +1,7 @@
+---
+tags: foculus, audit, rust, net, ed25519-dalek
+date: 2026-09-23
+---
 # audit: `net` feature build break — root cause and fix path
 
 closed by `audit/net-feature-iroh-1x-migration.md`: the migration to iroh 1.2 named

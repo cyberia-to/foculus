@@ -1,3 +1,7 @@
+---
+tags: foculus, audit, rust, net, iroh
+date: 2026-09-24
+---
 # net feature: iroh 0.96 → 1.2 migration
 
 date: 2026-09-24
@@ -62,6 +66,14 @@ now carries. It is not a gate for the branch head; the head's gate is the
 build server's, and the manifest's `bbg = "0.2"` does not resolve against the
 sibling `bbg` 0.3.0 checked out beside this repository, so the run cannot be
 reproduced on a desk without a matching sibling revision.
+
+That block is not this branch's doing and is not one line: `bbg = "0.2"` and
+`zheng = "0.3"` stand unchanged on `master` (`Cargo.toml:25-26`) against
+sibling checkouts already at 0.3.0 and 0.4.0, so the gate is red on this
+branch's base as well. Bumping both pins is its own change — foculus#18
+(`launch/scan-foculus-clean-build`), closed unmerged in the 2026-09-23 triage
+sweep over a registry-row reference, branch kept and reopenable by the owner.
+Until that lands, no commit of this repository can be judged by the gate.
 
 The `RUSTC_BOOTSTRAP=1` prefix on every command below is not a requirement of
 this crate: it was carried over from a sibling repository's build recipe
