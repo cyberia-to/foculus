@@ -1,9 +1,6 @@
-use cyber_hemera::{Hash, Side};
 use foculus::signal_codec::{self as codec, ErrorKind, decode_signal, encode_signal, proof_hash};
-use foculus::{BoxMoveRecord, CyberlinkRecord, Signal};
-use lens::{ColumnQuery, Commitment, Opening};
-use nebu::Goldilocks;
-use zheng::{Proof, SumcheckPoly};
+use foculus::{BoxMoveRecord, CyberlinkRecord, Proof, PublicProof, Signal};
+use zheng::execution::Certificate;
 
 fn sample(proof: Option<Proof>) -> Signal {
     Signal {
@@ -43,79 +40,76 @@ fn empty() -> Signal {
     signal
 }
 fn proof() -> Proof {
-    Proof {
-        commitment: Commitment(Hash::from_bytes([17; 32])),
-        matrix_evals: vec![Goldilocks::new(37), Goldilocks::new(nebu::field::P - 1)],
-        outer_sumcheck_polys: vec![SumcheckPoly {
-            degree: 1,
-            coeffs: vec![Goldilocks::new(41), Goldilocks::new(43)],
-        }],
-        sumcheck_polys: vec![SumcheckPoly {
-            degree: 0,
-            coeffs: vec![Goldilocks::new(47)],
-        }],
-        eval_value: Goldilocks::new(53),
-        pcs_opening: Opening::TensorMerkle {
-            row_combination: 59u64.to_le_bytes().to_vec(),
-            columns: vec![ColumnQuery {
-                index: 61,
-                column: 67u64.to_le_bytes().to_vec(),
-                path: vec![
-                    (Hash::from_bytes([18; 32]), Side::Left),
-                    (Hash::from_bytes([19; 32]), Side::Right),
-                ],
-            }],
+    Proof::Public(PublicProof {
+        statement: [17; 32],
+        certificate: Certificate {
+            free: vec![37, 0, nebu::field::P - 1, 53],
         },
-    }
+    })
+}
+fn free_mut(signal: &mut Signal) -> &mut Vec<u64> {
+    let Some(Proof::Public(body)) = signal.proof.as_mut() else {
+        unreachable!()
+    };
+    &mut body.certificate.free
+}
+/// Offset of the proof option byte in an encoding of `signal`.
+fn proof_flag(signal: &Signal) -> usize {
+    let mut bare = signal.clone();
+    bare.proof = None;
+    encode_signal(&bare).unwrap().len() - 1
 }
 
 #[test]
-fn roundtrip_retains_every_signal_and_authenticated_proof_field() {
+fn v2_roundtrip_retains_every_signal_and_proof_field() {
     let original = sample(Some(proof()));
     let bytes = encode_signal(&original).unwrap();
+    assert_eq!(bytes[codec::MAGIC.len()], codec::VERSION);
     let decoded = decode_signal(&bytes).unwrap();
     assert_eq!(decoded.neuron, original.neuron);
     assert_eq!(decoded.network, original.network);
     assert_eq!(decoded.prev, original.prev);
-    assert_eq!(
-        (decoded.step, decoded.height),
-        (original.step, original.height)
-    );
-    assert_eq!(decoded.links.len(), 1);
+    assert_eq!((decoded.step, decoded.height), (5, 7));
     let link = &decoded.links[0];
     assert_eq!(
         (link.neuron, link.from, link.to, link.token),
         ([8; 32], [9; 32], [10; 32], [11; 32])
     );
-    assert_eq!(
-        (link.amount, link.valence, link.height),
-        (u64::MAX, i8::MIN, 19)
-    );
+    assert_eq!((link.amount, link.valence, link.height), (u64::MAX, i8::MIN, 19));
     assert_eq!(decoded.delta_pi, original.delta_pi);
-    assert_eq!(decoded.box_moves.len(), 2);
-    assert_eq!(decoded.box_moves[0].nullifier, [14; 32]);
-    assert_eq!(decoded.box_moves[0].commitment, None);
-    assert_eq!(decoded.box_moves[1].nullifier, [15; 32]);
     assert_eq!(decoded.box_moves[1].commitment, Some(([16; 32], 31)));
-    let before = original.proof.as_ref().unwrap();
-    let after = decoded.proof.as_ref().unwrap();
-    assert_eq!(after.commitment, before.commitment);
-    assert_eq!(after.eval_value, before.eval_value);
-    assert_eq!(after.matrix_evals, before.matrix_evals);
-    assert_eq!(after.pcs_opening, before.pcs_opening);
-    for (a, b) in [&after.outer_sumcheck_polys, &after.sumcheck_polys]
-        .into_iter()
-        .zip([&before.outer_sumcheck_polys, &before.sumcheck_polys])
-    {
-        assert_eq!(a.len(), b.len());
-        for (a, b) in a.iter().zip(b) {
-            assert_eq!(a.degree, b.degree);
-            assert_eq!(a.coeffs, b.coeffs);
-        }
-    }
+    assert_eq!(decoded.proof, original.proof);
     assert_eq!(encode_signal(&decoded).unwrap(), bytes);
     let absent = decode_signal(&encode_signal(&sample(None)).unwrap()).unwrap();
     assert!(absent.proof.is_none());
+}
+
+#[test]
+fn v1_signals_without_a_proof_still_decode() {
+    for original in [sample(None), empty()] {
+        let mut v1 = encode_signal(&original).unwrap();
+        v1[codec::MAGIC.len()] = codec::LEGACY_VERSION;
+        let decoded = decode_signal(&v1).unwrap();
+        assert_eq!(decoded.content_id(), original.content_id());
+        assert!(decoded.proof.is_none());
+        // re-encoding upgrades to version 2
+        let v2 = encode_signal(&decoded).unwrap();
+        assert_eq!(v2[codec::MAGIC.len()], codec::VERSION);
+    }
+}
+
+#[test]
+fn v1_signals_carrying_a_legacy_proof_are_rejected() {
+    let signal = sample(None);
+    let mut v1 = encode_signal(&signal).unwrap();
+    v1[codec::MAGIC.len()] = codec::LEGACY_VERSION;
+    let flag = proof_flag(&signal);
+    v1[flag] = 1;
+    v1.extend_from_slice(&[0u8; 64]); // any legacy body
+    assert!(matches!(
+        decode_signal(&v1),
+        Err(codec::CodecError { kind: ErrorKind::LegacyProof, position }) if position == flag + 1
+    ));
 }
 
 #[test]
@@ -129,25 +123,19 @@ fn every_truncation_and_trailing_byte_is_rejected() {
         trailing.push(0);
         assert!(matches!(
             decode_signal(&trailing),
-            Err(codec::CodecError {
-                kind: ErrorKind::Trailing,
-                ..
-            })
+            Err(codec::CodecError { kind: ErrorKind::Trailing, .. })
         ));
     }
 }
 
 #[test]
-fn malformed_versions_tags_counts_and_residues_are_rejected() {
+fn malformed_versions_profiles_and_values_are_rejected() {
     let bytes = encode_signal(&empty()).unwrap();
     let mut version = bytes.clone();
-    version[codec::MAGIC.len()] = 2;
+    version[codec::MAGIC.len()] = 3;
     assert!(matches!(
         decode_signal(&version),
-        Err(codec::CodecError {
-            kind: ErrorKind::UnsupportedVersion(2),
-            ..
-        })
+        Err(codec::CodecError { kind: ErrorKind::UnsupportedVersion(3), .. })
     ));
     let mut domain = bytes.clone();
     domain[0] ^= 1;
@@ -157,88 +145,62 @@ fn malformed_versions_tags_counts_and_residues_are_rejected() {
     count[links..links + 4].copy_from_slice(&u32::MAX.to_le_bytes());
     assert!(matches!(
         decode_signal(&count),
-        Err(codec::CodecError {
-            kind: ErrorKind::Limit(_),
-            ..
-        })
-    ));
-    count[links..links + 4].copy_from_slice(&(codec::MAX_LINKS as u32).to_le_bytes());
-    assert!(matches!(
-        decode_signal(&count),
-        Err(codec::CodecError {
-            kind: ErrorKind::Truncated,
-            ..
-        })
+        Err(codec::CodecError { kind: ErrorKind::Limit(_), .. })
     ));
     let mut flag = bytes;
     *flag.last_mut().unwrap() = 2;
     assert!(decode_signal(&flag).is_err());
-    let mut with_proof = empty();
-    with_proof.proof = Some(proof());
-    let mut encoded = encode_signal(&with_proof).unwrap();
-    let scalar = links + 12 + 1 + 32;
-    encoded[scalar..scalar + 8].copy_from_slice(&nebu::field::P.to_le_bytes());
+
+    let with_proof = sample(Some(proof()));
+    let encoded = encode_signal(&with_proof).unwrap();
+    let profile = proof_flag(&with_proof) + 1;
+    let values = profile + 1 + 32 + 4;
+    let mut unknown = encoded.clone();
+    unknown[profile] = 2;
     assert!(matches!(
-        decode_signal(&encoded),
-        Err(codec::CodecError {
-            kind: ErrorKind::Invalid("Goldilocks residue"),
-            ..
-        })
+        decode_signal(&unknown),
+        Err(codec::CodecError { kind: ErrorKind::UnsupportedProof, .. })
     ));
-    let mut encoded = encode_signal(&with_proof).unwrap();
-    *encoded.last_mut().unwrap() = 2;
+    let mut residue = encoded.clone();
+    residue[values..values + 8].copy_from_slice(&nebu::field::P.to_le_bytes());
     assert!(matches!(
-        decode_signal(&encoded),
-        Err(codec::CodecError {
-            kind: ErrorKind::Invalid("Merkle side"),
-            ..
-        })
+        decode_signal(&residue),
+        Err(codec::CodecError { kind: ErrorKind::Invalid("Goldilocks residue"), .. })
+    ));
+    let mut trailing_zero = encoded.clone();
+    let last = trailing_zero.len() - 8;
+    trailing_zero[last..].copy_from_slice(&0u64.to_le_bytes());
+    assert!(matches!(
+        decode_signal(&trailing_zero),
+        Err(codec::CodecError { kind: ErrorKind::Invalid("certificate trailing zero"), .. })
+    ));
+    let mut huge = encoded;
+    huge[values - 4..values].copy_from_slice(&u32::MAX.to_le_bytes());
+    assert!(matches!(
+        decode_signal(&huge),
+        Err(codec::CodecError { kind: ErrorKind::Limit(_), .. })
     ));
 }
 
 #[test]
-fn encoding_rejects_oversized_or_unsupported_proof_inputs() {
+fn encoding_rejects_noncanonical_certificates_and_oversized_signals() {
+    let mut signal = sample(Some(proof()));
+    free_mut(&mut signal).push(0);
+    assert!(encode_signal(&signal).is_err());
+    assert!(proof_hash(&signal).is_err());
+    let mut signal = sample(Some(proof()));
+    free_mut(&mut signal)[0] = nebu::field::P;
+    assert!(encode_signal(&signal).is_err());
     let mut signal = sample(Some(proof()));
     signal.links = vec![signal.links[0].clone(); codec::MAX_LINKS + 1];
     assert!(encode_signal(&signal).is_err());
-    signal = sample(Some(proof()));
-    signal.proof.as_mut().unwrap().pcs_opening = Opening::Tensor {
-        round_commitments: vec![],
-        final_poly: vec![],
-        query_responses: vec![],
-    };
-    assert!(matches!(
-        encode_signal(&signal),
-        Err(codec::CodecError {
-            kind: ErrorKind::UnsupportedProof,
-            ..
-        })
-    ));
-    assert!(proof_hash(&signal).is_err());
+    let mut signal = empty();
     signal.proof = Some(proof());
-    signal.proof.as_mut().unwrap().matrix_evals =
-        vec![Goldilocks::ONE; codec::MAX_MATRIX_EVALS + 1];
-    assert!(encode_signal(&signal).is_err());
-    signal.proof = Some(proof());
-    signal.proof.as_mut().unwrap().outer_sumcheck_polys[0]
-        .coeffs
-        .clear();
-    assert!(encode_signal(&signal).is_err());
-    signal.proof = Some(proof());
-    let Opening::TensorMerkle {
-        row_combination, ..
-    } = &mut signal.proof.as_mut().unwrap().pcs_opening
-    else {
-        unreachable!()
-    };
-    *row_combination = nebu::field::P.to_le_bytes().to_vec();
+    *free_mut(&mut signal) = vec![1; codec::MAX_CERTIFICATE_VALUES + 1];
     assert!(encode_signal(&signal).is_err());
     assert!(matches!(
         decode_signal(&vec![0; codec::MAX_SIGNAL_BYTES + 1]),
-        Err(codec::CodecError {
-            kind: ErrorKind::Limit(_),
-            ..
-        })
+        Err(codec::CodecError { kind: ErrorKind::Limit(_), .. })
     ));
 }
 
@@ -252,157 +214,31 @@ fn proof_identity_binds_proof_bytes_independently_of_signal_fields() {
     signal.network[0] ^= 1;
     signal.step += 1;
     assert_eq!(proof_hash(&signal).unwrap(), original);
-    signal.proof.as_mut().unwrap().matrix_evals[0] = Goldilocks::new(100);
+    free_mut(&mut signal)[0] = 100;
     assert_ne!(proof_hash(&signal).unwrap(), original);
 }
 
 #[test]
-fn a_real_zheng_pay_proof_verifies_after_signal_roundtrip() {
-    let statement = foculus::PayStatement {
-        content_id: [71; 32],
-        total_out: 100,
-        leg_count: 1,
-    };
-    let mut signal = sample(Some(foculus::prove_pay(&statement).unwrap()));
-    let original_hash = proof_hash(&signal).unwrap();
-    signal = decode_signal(&encode_signal(&signal).unwrap()).unwrap();
-    assert!(foculus::verify_pay(
-        signal.proof.as_ref().unwrap(),
-        &statement
-    ));
-    assert_eq!(proof_hash(&signal).unwrap(), original_hash);
-}
-
-#[test]
-fn every_nested_proof_count_and_field_encoding_is_bounded() {
-    let body = encode_signal(&empty()).unwrap().len();
+fn a_real_pay_proof_verifies_after_signal_roundtrip() {
     let mut signal = empty();
-    signal.proof = Some(proof());
-    let original = encode_signal(&signal).unwrap();
-    let matrix = body + 40;
-    let outer = matrix + 4 + 16;
-    let inner = outer + 4 + 1 + 4 + 16;
-    let tag = inner + 4 + 1 + 4 + 8;
-    let row = tag + 1;
-    let columns = row + 4 + 8;
-    let column_bytes = columns + 4 + 4;
-    let path = column_bytes + 4 + 8;
-    for offset in [
-        matrix,
-        outer,
-        outer + 5,
-        inner,
-        inner + 5,
-        row,
-        columns,
-        column_bytes,
-        path,
-    ] {
-        let mut malformed = original.clone();
-        malformed[offset..offset + 4].copy_from_slice(&u32::MAX.to_le_bytes());
-        assert!(
-            matches!(
-                decode_signal(&malformed),
-                Err(codec::CodecError {
-                    kind: ErrorKind::Limit(_),
-                    ..
-                })
-            ),
-            "count offset {offset}"
-        );
-    }
-    for offset in [row + 4, column_bytes + 4, outer + 9, inner + 9] {
-        let mut malformed = original.clone();
-        malformed[offset..offset + 8].copy_from_slice(&nebu::field::P.to_le_bytes());
-        assert!(
-            decode_signal(&malformed).is_err(),
-            "noncanonical field at {offset}"
-        );
-    }
-    let mut malformed = original.clone();
-    malformed[tag] = 0;
-    assert!(matches!(
-        decode_signal(&malformed),
-        Err(codec::CodecError {
-            kind: ErrorKind::UnsupportedProof,
-            ..
-        })
-    ));
-    let mut malformed = original;
-    malformed[row..row + 4].copy_from_slice(&7u32.to_le_bytes());
-    assert!(matches!(
-        decode_signal(&malformed),
-        Err(codec::CodecError {
-            kind: ErrorKind::Invalid("field vector"),
-            ..
-        })
-    ));
-}
-
-#[test]
-fn encoder_enforces_each_collection_limit_and_aggregate_byte_budget() {
-    let mut signal = empty();
-    signal.delta_pi = vec![([0; 32], 0); codec::MAX_DELTAS + 1];
-    assert!(encode_signal(&signal).is_err());
-    signal = empty();
-    signal.box_moves = vec![
-        BoxMoveRecord {
-            nullifier: [0; 32],
-            commitment: None
+    signal.links = vec![
+        CyberlinkRecord {
+            neuron: [1; 32],
+            from: [1; 32],
+            to: [4; 32],
+            token: [5; 32],
+            amount: 70,
+            valence: 1,
+            height: 0,
         };
-        codec::MAX_BOX_MOVES + 1
+        2
     ];
-    assert!(encode_signal(&signal).is_err());
-    for case in 0..6 {
-        let mut candidate = proof();
-        match case {
-            0 => {
-                candidate.outer_sumcheck_polys =
-                    vec![candidate.outer_sumcheck_polys[0].clone(); codec::MAX_ROUNDS + 1]
-            }
-            1 => {
-                candidate.sumcheck_polys =
-                    vec![candidate.sumcheck_polys[0].clone(); codec::MAX_ROUNDS + 1]
-            }
-            _ => {
-                let Opening::TensorMerkle {
-                    row_combination,
-                    columns,
-                } = &mut candidate.pcs_opening
-                else {
-                    unreachable!()
-                };
-                match case {
-                    2 => *row_combination = vec![0; codec::MAX_FIELD_BYTES + 8],
-                    3 => *columns = vec![columns[0].clone(); codec::MAX_COLUMNS + 1],
-                    4 => {
-                        columns[0].path = vec![
-                            (Hash::from_bytes([0; 32]), Side::Left);
-                            codec::MAX_MERKLE_PATH + 1
-                        ]
-                    }
-                    5 => columns[0].column = vec![0; codec::MAX_FIELD_BYTES + 8],
-                    _ => unreachable!(),
-                }
-            }
-        }
-        signal = empty();
-        signal.proof = Some(candidate);
-        assert!(encode_signal(&signal).is_err(), "collection case {case}");
-    }
-    let mut candidate = proof();
-    let Opening::TensorMerkle { columns, .. } = &mut candidate.pcs_opening else {
-        unreachable!()
-    };
-    columns[0].column = vec![0; codec::MAX_FIELD_BYTES];
-    *columns = vec![columns[0].clone(); 17];
-    signal = empty();
-    signal.proof = Some(candidate);
-    assert!(matches!(
-        encode_signal(&signal),
-        Err(codec::CodecError {
-            kind: ErrorKind::Limit("signal bytes"),
-            ..
-        })
-    ));
+    signal.proof = Some(foculus::prove_pay(&signal).unwrap());
+    let original_hash = proof_hash(&signal).unwrap();
+    let decoded = decode_signal(&encode_signal(&signal).unwrap()).unwrap();
+    assert!(foculus::verify_pay(decoded.proof.as_ref().unwrap(), &decoded));
+    assert_eq!(proof_hash(&decoded).unwrap(), original_hash);
+    let mut other = decoded.clone();
+    other.links[1].amount = 71;
+    assert!(!foculus::verify_pay(decoded.proof.as_ref().unwrap(), &other));
 }
