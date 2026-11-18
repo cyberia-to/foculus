@@ -860,3 +860,36 @@ fn bytes_to_shard(index: usize, bytes: &[u8]) -> erasure::Shard {
     }
     erasure::Shard { index, data }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An endpoint id that round-trips through `EndpointId`'s own parser, so
+    /// the bare-id case below is rejected for being bare and not for being
+    /// unparseable.
+    fn an_endpoint_id() -> EndpointId {
+        SecretKey::generate().public()
+    }
+
+    #[test]
+    fn parse_peer_addr_accepts_the_full_endpoint_addr_json() {
+        let addr = iroh::EndpointAddr::new(an_endpoint_id());
+        let json = serde_json::to_string(&addr).expect("serialise addr");
+        let parsed = parse_peer_addr(&json).expect("the addr JSON is what add-peer asks for");
+        assert_eq!(parsed.id, addr.id);
+    }
+
+    #[test]
+    fn parse_peer_addr_refuses_a_bare_endpoint_id() {
+        let id = an_endpoint_id().to_string();
+        let err = parse_peer_addr(&id).expect_err("a bare id is not dialable").to_string();
+        assert!(err.contains("bare endpoint id"), "{err}");
+    }
+
+    #[test]
+    fn parse_peer_addr_refuses_a_malformed_peer() {
+        let err = parse_peer_addr("peer-a").expect_err("not an id and not JSON").to_string();
+        assert!(err.contains("invalid peer"), "{err}");
+    }
+}

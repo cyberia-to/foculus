@@ -6,7 +6,7 @@
 //! Radio settle transport — real iroh QUIC push of settle-gossip frames.
 //!
 //! ALPN `foculus/settle/1`: each connection carries length-prefixed
-//! [`crate::wire`] frames. Peers are known endpoint ids (tickets / mDNS).
+//! [`crate::wire`] frames. Peers are known endpoint ids (tickets).
 //! Topic filter = claims_root; epidemic fanout to all connected peers that
 //! share a subscription (or all peers if unfiltered).
 //!

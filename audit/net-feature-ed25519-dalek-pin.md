@@ -4,9 +4,12 @@ date: 2026-09-23
 ---
 # audit: `net` feature build break — root cause and fix path
 
-closed by `audit/net-feature-iroh-1x-migration.md`: the migration to iroh 1.2 named
-under "remains" below has since landed, so `net`'s own tests are no longer
-unverifiable by `cargo test --features net`. What follows is the record as written.
+fix path proposed, not landed: the migration to iroh 1.2 named under "remains"
+below is written on branch `fix/net-feature-iroh-1x` (foculus#85) and described in
+`audit/net-feature-iroh-1x-migration.md`; it is under review, not in the tree. Until
+it merges — and while the manifest's `bbg`/`zheng` pins keep the build server from
+judging any commit of this repository — `net`'s own tests stay unverifiable by
+`cargo test --features net`. What follows is the record as written.
 
 date: 2026-09-23
 revision: 177fad4 (origin/master)
