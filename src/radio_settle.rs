@@ -106,14 +106,8 @@ pub struct SettleRadio {
 }
 
 impl SettleRadio {
-    /// Start on a fixed port with known peer addresses (production-like).
-    ///
-    /// iroh 1.x dropped `address-lookup-mdns` (see `audit/net-feature-ed25519-dalek-pin.md`
-    /// and `audit/net-feature-iroh-1x-migration.md`): there is no automatic
-    /// local-network peer discovery upstream any more. Peers are dialed by their known
-    /// `EndpointAddr` (already how `node.rs`'s `SyncNode` and this crate's tests work), so an
-    /// empty `MemoryLookup` that callers populate via `add_peer_addr` is a correct, not merely
-    /// interim, substitute here — not a discovery mechanism, a peer-address book.
+    /// Start on a fixed port with known peer addresses, not mDNS discovery
+    /// (`audit/net-feature-iroh-1x-migration.md`).
     pub async fn start(data_dir: &Path, port: u16) -> Result<Self> {
         std::fs::create_dir_all(data_dir)?;
         let key = load_or_create_key(&data_dir.join("settle_secret.key"))?;

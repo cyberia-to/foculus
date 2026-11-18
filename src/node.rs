@@ -119,9 +119,11 @@ impl SyncNode {
         };
 
         // iroh 1.x dropped `address-lookup-mdns` (no automatic local-network discovery
-        // upstream any more); peers are already dialed below by their known `EndpointAddr`
-        // (parsed from `peers.json`), so an empty `MemoryLookup` is a correct peer-address
-        // book here, not a discovery stand-in.
+        // upstream any more); peers are dialed below by the full `EndpointAddr` recorded in
+        // `peers.json`, so an empty `MemoryLookup` is a correct peer-address book here, not
+        // a discovery stand-in. With relays disabled and this book empty, a bare endpoint id
+        // has nothing to resolve through: `connect_peer` rejects one rather than dialling an
+        // address that cannot be reached.
         let bind_addr = std::net::SocketAddrV4::new(std::net::Ipv4Addr::UNSPECIFIED, port);
         let endpoint = Endpoint::builder(Minimal)
             .relay_mode(RelayMode::Disabled)
@@ -184,7 +186,7 @@ impl SyncNode {
     }
 
     pub async fn run_daemon(&self, sync_interval_secs: u64) -> Result<()> {
-        println!("listening via iroh QUIC + mDNS (Router handles connections)");
+        println!("listening via iroh QUIC (Router handles connections)");
 
         if sync_interval_secs > 0 {
             let state = self.state.clone();
@@ -224,16 +226,19 @@ impl SyncNode {
 
         let placement = capacity_weighted_placement(state.n, &state.peer_capacities);
 
+        // Placement is a plan for where shards should end up, not a transfer:
+        // the wire protocol is pull-only (MSG_GET_CHUNK above; there is no push
+        // opcode), so a peer only ever gets a shard by fetching it from us on
+        // its next sync. Every shard is therefore written locally — dropping
+        // the ones assigned elsewhere would write them nowhere at all and
+        // leave the file unrebuildable.
         for shard in &shards {
             let bytes = shard_to_bytes(shard);
             let hash = cyber_hemera::hash(&bytes);
             let hex = hash.to_hex();
 
-            let keep_local = placement.get(shard.index).copied().unwrap_or(0) == 0;
-            if keep_local || state.peers.is_empty() {
-                let path = chunks_dir.join(&hex);
-                std::fs::write(&path, &bytes)?;
-            }
+            let path = chunks_dir.join(&hex);
+            std::fs::write(&path, &bytes)?;
 
             shard_hashes.push(hex);
         }
@@ -262,13 +267,13 @@ impl SyncNode {
         state.registry.insert(entry);
         self.save_registry(&state)?;
 
-        let local_count = placement.iter().filter(|&&d| d == 0).count();
+        let assigned_local = placement.iter().filter(|&&d| d == 0).count();
         println!(
-            "stored '{}' ({} bytes, {} shards, {} local)",
+            "stored '{}' ({} bytes, {} shards, all held locally, {} assigned to peers to pull)",
             name,
             data.len(),
             state.n,
-            local_count
+            state.n.saturating_sub(assigned_local)
         );
         Ok(())
     }
@@ -426,6 +431,8 @@ impl SyncNode {
     }
 
     pub async fn add_peer(&self, addr: &str, capacity: u64) -> Result<()> {
+        // Refuse an unreachable peer at the point of entry, not at first dial.
+        parse_peer_addr(addr)?;
         let mut state = self.state.write().await;
         if !state.peers.contains(&addr.to_string()) {
             state.peers.push(addr.to_string());
@@ -733,15 +740,30 @@ async fn handle_connection(conn: Connection, state: Arc<RwLock<SharedState>>) ->
 
 // ── Client: fetch from peers ──
 
+/// Parse a stored peer string into a dialable `EndpointAddr`.
+///
+/// iroh 1.x has no mDNS discovery, this node disables relays and its address
+/// book (`MemoryLookup`) is empty, so a bare endpoint id carries no way to
+/// reach the peer: only the full `EndpointAddr` JSON — the `addr:` line that
+/// `node start` prints — can be dialed. Reject an id with that said plainly
+/// rather than storing or dialing an address that can never resolve.
+fn parse_peer_addr(peer: &str) -> Result<iroh::EndpointAddr> {
+    if let Ok(addr) = serde_json::from_str::<iroh::EndpointAddr>(peer) {
+        return Ok(addr);
+    }
+    if peer.parse::<EndpointId>().is_ok() {
+        anyhow::bail!(
+            "peer '{}' is a bare endpoint id: the full EndpointAddr JSON (the 'addr:' \
+             line printed by 'node start') is now required — no address lookup is left \
+             to resolve a bare id through",
+            peer
+        );
+    }
+    anyhow::bail!("invalid peer: expected the JSON EndpointAddr printed by 'node start'")
+}
+
 async fn connect_peer(ep: &Endpoint, peer: &str) -> Result<Connection> {
-    // Try parsing as EndpointId first, then as EndpointAddr JSON.
-    let endpoint_addr: iroh::EndpointAddr = if let Ok(id) = peer.parse::<EndpointId>() {
-        iroh::EndpointAddr::new(id)
-    } else if let Ok(addr) = serde_json::from_str::<iroh::EndpointAddr>(peer) {
-        addr
-    } else {
-        anyhow::bail!("invalid peer: expected node ID or JSON EndpointAddr")
-    };
+    let endpoint_addr = parse_peer_addr(peer)?;
     ep.connect(endpoint_addr, SYNC_ALPN)
         .await
         .context("failed to connect to peer")

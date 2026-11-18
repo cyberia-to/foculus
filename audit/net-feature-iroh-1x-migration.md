@@ -22,13 +22,20 @@ the crate, not renamed.
 `SettleRadio::start` (`src/radio_settle.rs`) and `SyncNode::start`
 (`src/node.rs`) both used `MdnsAddressLookup::builder()` only in their
 "production" constructor; every test and the `start_memory` constructor
-already used `MemoryLookup`, and every peer dial in both files already
-resolves through a known `EndpointAddr` (parsed from `peers.json` in
-`node.rs`, or added via `add_peer_addr` in `radio_settle.rs`) rather than
-through address-lookup resolution of a bare `EndpointId`. Swapping the
-production path's `MdnsAddressLookup` for an empty `MemoryLookup` — the same
-type already exercised everywhere else — is therefore not an interim stopgap;
-it matches how every call site in this codebase actually locates a peer today.
+already used `MemoryLookup`, and a peer is normally dialed through a known
+`EndpointAddr` (parsed from `peers.json` in `node.rs`, or added via
+`add_peer_addr` in `radio_settle.rs`). Swapping the production path's
+`MdnsAddressLookup` for an empty `MemoryLookup` — the same type already
+exercised everywhere else — is therefore not an interim stopgap; it matches
+how a peer is actually located here.
+
+One call site was not covered by that: `node.rs`'s `connect_peer` also
+accepted a *bare* `EndpointId` and built an addressless
+`EndpointAddr::new(id)` from it. With mDNS gone, `RelayMode::Disabled` and
+an empty address book, such an address can never resolve, and the failure
+surfaced only as "failed to connect to peer". `parse_peer_addr`
+(`src/node.rs`) now rejects a bare id outright, in `add_peer` as well as at
+dial time, naming the full `EndpointAddr` JSON as what is required.
 
 Also required: `Endpoint::builder()` takes a `Preset` argument in iroh 1.x
 (`iroh::endpoint::presets::Minimal` — sets only the mandatory crypto
@@ -47,6 +54,21 @@ real discovery mechanism (iroh's `DnsAddressLookup`/pkarr presets, or a
 cyber-specific peer-exchange over an already-connected topic) is chosen.
 
 ## verified
+
+This transcript is the migration slice's own run, taken on 2026-09-24 in the
+row-39 worktree named under `revision:` above — before the placement and
+node_util work and before the `origin/master` merge (#83) that this branch
+now carries. It is not a gate for the branch head; the head's gate is the
+build server's, and the manifest's `bbg = "0.2"` does not resolve against the
+sibling `bbg` 0.3.0 checked out beside this repository, so the run cannot be
+reproduced on a desk without a matching sibling revision.
+
+The `RUSTC_BOOTSTRAP=1` prefix on every command below is not a requirement of
+this crate: it was carried over from a sibling repository's build recipe
+(`erga`). Neither `foculus` nor any of its path dependencies (`nebu`,
+`cyber-hemera`, `bbg`, `zheng`, `tade`, `tru`, `tok`) declares a nightly
+feature gate, and the repository pins no toolchain. Read the prefix as noise
+in the transcript, not as a step to repeat.
 
 ```
 $ RUSTC_BOOTSTRAP=1 cargo check --features net

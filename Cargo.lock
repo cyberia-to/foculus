@@ -858,7 +858,6 @@ dependencies = [
  "cyber-tru",
  "iroh",
  "proptest",
- "rand 0.9.5",
  "serde",
  "serde_json",
  "strata-nebu",

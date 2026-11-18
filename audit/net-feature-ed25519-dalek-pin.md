@@ -1,5 +1,9 @@
 # audit: `net` feature build break — root cause and fix path
 
+closed by `audit/net-feature-iroh-1x-migration.md`: the migration to iroh 1.2 named
+under "remains" below has since landed, so `net`'s own tests are no longer
+unverifiable by `cargo test --features net`. What follows is the record as written.
+
 date: 2026-09-23
 revision: 177fad4 (origin/master)
 command: `cargo check --features net` (after locally applying row 47/foculus#18's

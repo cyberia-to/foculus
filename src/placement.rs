@@ -11,7 +11,7 @@
 /// `1..=peer_capacities.len()` are peers in the order given, weighted by
 /// declared byte capacity.
 ///
-/// A declared capacity of `0` means "unlimited" (see `node::format_bytes`,
+/// A declared capacity of `0` means "unlimited" (see `node_util::format_bytes`,
 /// which prints it that way), including self's own capacity — self never
 /// declares a byte figure at all. An unlimited device resolves to the
 /// largest known *finite* capacity among the other devices, so it is
@@ -121,7 +121,7 @@ mod tests {
     #[test]
     fn declared_unlimited_peer_is_not_starved() {
         // Regression: a peer that declares capacity 0 ("unlimited", per
-        // node::format_bytes) used to be weighted `.max(1)` — one byte,
+        // node_util::format_bytes) used to be weighted `.max(1)` — one byte,
         // the smallest possible share — the opposite of what "unlimited"
         // should mean.
         let p = capacity_weighted_placement(100, &[1_000, 0]);
