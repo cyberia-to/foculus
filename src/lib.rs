@@ -1,5 +1,5 @@
 // ---
-// tags: sync, rust
+// tags: foculus, rust
 // crystal-type: source
 // crystal-domain: cyber
 // ---

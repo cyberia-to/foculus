@@ -13,7 +13,7 @@ every constant referenced across `specs/`, collected once. most of what follows 
 
 | symbol | meaning | status | value |
 |---|---|---|---|
-| $\lambda_d,\lambda_s,\lambda_h$ | diffusion / springs / heat combination weights, sum to 1 | chosen (stated default, [[provable-consensus]]) | $0.5, 0.3, 0.2$ |
+| $\lambda_d,\lambda_s,\lambda_h$ | diffusion / springs / heat combination weights, sum to 1 | chosen (stated default of tru's kernel, [[tru/specs/proving]]) | $0.5, 0.3, 0.2$ |
 | $\alpha$ | diffusion teleport probability | illustrative-only, reused everywhere without derivation | $0.85$ |
 | $\mu$ | springs screening constant | undetermined -- no value given anywhere in this repo | -- |
 | $\tau_{\text{heat}}$ | heat kernel bandwidth, in $e^{-\tau\lambda_2}$ | undetermined, and collides in notation with the finality threshold $\tau(t)$ -- see notation collisions below | -- |
@@ -30,7 +30,7 @@ these follow from the parameters above plus graph structure. listing them here t
 | $C$ | tri-kernel Lipschitz sensitivity constant | $\leq2\lambda_d\alpha+2\lambda_s+4\lambda_h$ | upper bound $2.25$ at the weights above; diffusion's contribution is derived, springs/heat's are asserted, see `roadmap/springs-heat-sensitivity.md` |
 | $k_{\min}$ | settlement Hoeffding sample count | $\lceil\ln(2/\delta)/(2\varepsilon^2)\rceil$ | derived from $\varepsilon,\delta$ below, not independently chosen -- $\approx72{,}500$ at the illustrative $\varepsilon=1\%,\delta=10^{-6}$ |
 
-the one real measurement in this repo: bostrom's empirical $\kappa=0.74,\lambda_2=0.13$ pair ([[provable-consensus]]), consistent with the composite formula for reasonable $\tau_{\text{heat}},\|L\|$, but a single historical snapshot, not a validated operating range.
+the one real measurement these specs rest on: bostrom's empirical $\kappa=0.74,\lambda_2=0.13$ pair, measured by tru ([[tru/eval/spectral-gap-bostrom|spectral gap of bostrom]]) and consistent with the composite formula for reasonable $\tau_{\text{heat}},\|L\|$, but a single historical snapshot, not a validated operating range.
 
 ## timing
 

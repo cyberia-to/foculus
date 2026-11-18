@@ -24,7 +24,7 @@ the duplication ledger that fixed these borders is `soft3/roadmap/component-boun
 
 ## rules
 
-- field arithmetic only in anything that can be proven or must agree across machines. new code adds no `f64`; display code may print one (`src/cli.rs` prints, it does not decide). two deciding call sites still break the rule and are the exceptions to repair, not precedent: `Accumulator::k_min`/`meets_precision` (`src/tickets.rs`) decides the precision floor in `f64`, and the rebalance target in `src/vdisk.rs` decides in `f64` which device sheds bytes
+- field arithmetic only in anything that can be proven or must agree across machines. new code adds no `f64`; display code may print one (`src/cli.rs` prints, `src/node.rs`'s byte formatter prints, neither decides). four deciding call sites still break the rule and are the exceptions to repair, not precedent: `Accumulator::k_min`/`meets_precision` (`src/tickets.rs`) decides the precision floor in `f64`; the rebalance target in `src/vdisk.rs` decides in `f64` which device sheds bytes; `fx_weight` (`src/rewards.rs`) converts an `Fx` share to `f64` to build the `u128` weight that decides each neuron's slice of the reward budget; and `verify_epoch_cert` (`src/epoch_cert.rs`) compares `to_f64()` values to decide whether an epoch certificate verifies
 - every protocol constant lives in `specs/parameters.md`, referenced symbolically elsewhere
 - `cargo test` green and zero warnings before a commit; never commit to `master` directly — branch + PR
 - plans and audits go under this repo (`audit/`, `.claude/plans/`), never under `~/.claude/`
