@@ -342,18 +342,17 @@ pub fn mint_receipt_to_ledger(
     )
 }
 
-/// Nonnegative weight for proportional split. Any strictly positive Fx maps
-/// to at least 1 so tiny Shapley shares still receive budget mass.
+/// Nonnegative weight for proportional split, by integer arithmetic only:
+/// two nodes recompute this when they verify a receipt, so no step of it may
+/// go through f64. A strictly positive `Fx` is stored as the scaled integer
+/// `x · 2^FRAC_BITS`, which is therefore ≥ 1 — tiny Shapley shares keep
+/// their budget mass — and the common scale cancels in the ratio the split
+/// takes. `Fx` orders by its signed value, so the sign test is exact.
 fn fx_weight(x: Fx) -> u128 {
     if x <= Fx::ZERO {
         return 0;
     }
-    let f = x.to_f64();
-    if f <= 0.0 {
-        return 0;
-    }
-    let w = (f * 1_000_000_000_000.0) as u128;
-    w.max(1)
+    x.raw().as_u64() as u128
 }
 
 fn receipt_hash(epoch: u64, beacon: &[u8; 32], shares: &[SettledShare]) -> [u8; 32] {

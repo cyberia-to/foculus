@@ -154,12 +154,19 @@ pub fn redraw_peer(
 /// This replaces σ_f. It checks the step, not its inputs: `left` and
 /// `right` are trusted only once [`verify_cluster`] has produced them from
 /// verified tickets.
+///
+/// Inputs whose seen sets intersect are rejected: `fold_acc` double-counts
+/// a shared ticket's marginals, so the step is defined only on disjoint
+/// accumulators (see [`crate::tickets::fold_acc`]).
 pub fn verify_fold_ticket(
     beacon: &[u8; 32],
     cluster: &ClusterId,
     target: u64,
     ft: &FoldTicket,
 ) -> bool {
+    if ft.left.seen.intersection(&ft.right.seen).next().is_some() {
+        return false;
+    }
     let result = fold_acc(&ft.left, &ft.right);
     if result.commitment != ft.result.commitment
         || result.k != ft.result.k

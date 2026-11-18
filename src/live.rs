@@ -280,6 +280,7 @@ impl LiveNode {
             ctx: &ctx,
             params: &params,
             target: easy_target(),
+            budget: self.budget,
         };
         if !verify_epoch_cert(&cert, Some(&inputs)) {
             return Err(LiveError::CertInvalid);
@@ -321,6 +322,7 @@ impl LiveNode {
                 ctx: &ctx,
                 params: &params,
                 target: easy_target(),
+                budget: self.budget,
             };
             verify_epoch_cert(&cert, Some(&inputs))
         } else {

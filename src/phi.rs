@@ -164,7 +164,14 @@ fn spmv(g: &SparseGraph, x: &[F]) -> Vec<F> {
 }
 
 /// One tri-kernel step: diffusion, springs, heat, combine, L1-normalize.
-pub fn trikernel_step(phi: &[F], g: &PhiGraph<'_>) -> Vec<F> {
+///
+/// `None` on a graph that is not well-formed or a φ of the wrong length:
+/// the step indexes vectors by edge endpoint, so a library call must refuse
+/// malformed input rather than panic on it.
+pub fn trikernel_step(phi: &[F], g: &PhiGraph<'_>) -> Option<Vec<F>> {
+    if !g.valid() || phi.len() != g.n() {
+        return None;
+    }
     let n = phi.len();
     let p = g.params;
     let tphi = spmv(g.transition, phi);
@@ -183,10 +190,10 @@ pub fn trikernel_step(phi: &[F], g: &PhiGraph<'_>) -> Vec<F> {
         sum += raw[i];
     }
     if sum == F::ZERO {
-        return g.teleport.to_vec();
+        return Some(g.teleport.to_vec());
     }
     let inv = sum.inv();
-    raw.iter().map(|v| *v * inv).collect()
+    Some(raw.iter().map(|v| *v * inv).collect())
 }
 
 /// Run `iterations` steps from φ₀ and bind the result.
@@ -196,7 +203,7 @@ pub fn compute_phi_star(g: &PhiGraph<'_>, phi0: &[F], iterations: u32) -> Option
     }
     let mut phi = phi0.to_vec();
     for _ in 0..iterations {
-        phi = trikernel_step(&phi, g);
+        phi = trikernel_step(&phi, g)?;
     }
     Some(PhiClaim {
         binding: PhiBinding {

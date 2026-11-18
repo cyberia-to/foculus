@@ -34,17 +34,20 @@ fn policy(miner: u8, start: u64) -> TicketPolicy {
     }
 }
 
+/// The protocol budget every receipt in this file settles over.
+const BUDGET: u64 = 1000;
+
 fn verify(rec: &SettleReceipt, base: &[Link], claims: &[RewardClaim]) -> Result<(), ReceiptError> {
     let (ctx, params) = (Context::none(), FocusingParams::default());
     verify_settlement(
         rec,
-        &SettleVerifyInputs { base, claims, ctx: &ctx, params: &params, target: easy_target() },
+        &SettleVerifyInputs { base, claims, ctx: &ctx, params: &params, target: easy_target(), budget: BUDGET },
     )
 }
 
 fn receipt(peers: &[ClusterAcc]) -> SettleReceipt {
     let (ctx, params) = (Context::none(), FocusingParams::default());
-    settle_with_peer_accs(1, &GENESIS_PREV, &base(), &claims(), &ctx, &params, 1000, &policy(10, 0), peers)
+    settle_with_peer_accs(1, &GENESIS_PREV, &base(), &claims(), &ctx, &params, BUDGET, &policy(10, 0), peers)
         .unwrap()
 }
 
@@ -71,6 +74,21 @@ fn tampered_receipts_are_rejected() {
     let mut target = rec;
     target.settlement.as_mut().unwrap().target = 1;
     assert_eq!(verify(&target, &base(), &claims()), Err(ReceiptError::Target));
+}
+
+#[test]
+fn a_receipt_minting_another_budget_is_rejected() {
+    let (ctx, params) = (Context::none(), FocusingParams::default());
+    // A settler who mints ten times the protocol budget leaves a receipt that
+    // is internally consistent — shares and receipt hash follow from the
+    // inflated number — so only the budget from public inputs rejects it.
+    let fat = settle_with_peer_accs(
+        1, &GENESIS_PREV, &base(), &claims(), &ctx, &params, 10 * BUDGET, &policy(10, 0), &[],
+    )
+    .unwrap();
+    assert_eq!(fat.budget, 10 * BUDGET);
+    assert!(verify_receipt(&fat), "the forged receipt binds its own shares");
+    assert_eq!(verify(&fat, &base(), &claims()), Err(ReceiptError::Budget));
 }
 
 #[test]

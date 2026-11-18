@@ -13,8 +13,16 @@
 //! - optional settle receipt, whose ticket proofs ride inside it
 //!
 //! [`verify_epoch_cert`] fails closed: a certificate that settles needs the
-//! settle inputs, one that binds φ* needs the graphs. Nothing a certificate
-//! binds is accepted unchecked.
+//! settle inputs, one that binds φ* needs the graphs.
+//!
+//! What verification establishes: the certificate hash, the outer VDF
+//! beacon, claims_root against that beacon, the settle receipt in full
+//! (budget, every ticket proof, shares, receipt hash) and φ* by
+//! recomputation over the bound graphs. What it does not: the tip. Height,
+//! root and trust grade are the issuer's assertion — the grade is read, not
+//! established, and a certificate does not prove its root. A light client
+//! takes a trusted root from [`crate::tip::Tip::join_chain`], never from a
+//! certificate (see [`crate::live::LiveNode::accept_epoch_cert`]).
 
 use cyber_hemera::hash as hemera_hash;
 use nebu::Goldilocks;
@@ -242,6 +250,7 @@ mod tests {
             ctx: &Context::none(),
             params: &FocusingParams::default(),
             target: easy_target(),
+            budget: runner.budget,
         };
         assert!(verify_epoch_cert(&cert, Some(&inputs)));
         // a settling certificate without its inputs fails closed

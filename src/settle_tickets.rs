@@ -8,9 +8,9 @@
 //! Settle: grind local winning tickets and prove each; redraw and prove the
 //! tickets peers' self-accumulators name; keep what verifies; the cluster
 //! accumulator is the sum over the accepted set; shares and the receipt
-//! follow from it. Verify: the same pipeline from public inputs — every
-//! ticket proof, the accumulator, the shares, the receipt hash. Nothing in
-//! a receipt is taken on the settler's word.
+//! follow from it. Verify: the same pipeline from public inputs — the
+//! budget, every ticket proof, the accumulator, the shares, the receipt
+//! hash. Nothing in a receipt is taken on the settler's word.
 
 use tru::{Context, FocusingParams, Link, impulse};
 
@@ -32,6 +32,9 @@ pub struct SettleVerifyInputs<'a> {
     pub params: &'a FocusingParams,
     /// Protocol win-test target the tickets must beat.
     pub target: u64,
+    /// Protocol budget for the epoch: the receipt's own budget must equal it,
+    /// or the settler would be minting a quantity nobody checked.
+    pub budget: u64,
 }
 
 /// The public claim set a cluster settles over.
@@ -194,6 +197,8 @@ pub enum ReceiptError {
     DirectedTotal,
     /// Ticket proof target differs from the protocol target.
     Target,
+    /// Receipt budget differs from the protocol budget.
+    Budget,
     Cluster(ClusterError),
     /// Sample count differs from the accepted set.
     SampleCount,
@@ -201,11 +206,14 @@ pub enum ReceiptError {
     Shares,
 }
 
-/// Verify a receipt from public inputs: claims, Δφ⁺, every ticket proof (or
-/// the Monte-Carlo samples), the shares, the receipt hash.
+/// Verify a receipt from public inputs: the budget, claims, Δφ⁺, every
+/// ticket proof (or the Monte-Carlo samples), the shares, the receipt hash.
 pub fn verify_settlement(rec: &SettleReceipt, inp: &SettleVerifyInputs<'_>) -> Result<(), ReceiptError> {
     if !verify_receipt(rec) {
         return Err(ReceiptError::Malformed);
+    }
+    if rec.budget != inp.budget {
+        return Err(ReceiptError::Budget);
     }
     let ids: Vec<[u8; 32]> = inp.claims.iter().map(|c| c.id).collect();
     if inp.claims.is_empty() || claims_root(&ids) != rec.claims_root {

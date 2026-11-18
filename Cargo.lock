@@ -982,7 +982,6 @@ dependencies = [
  "bbg",
  "clap",
  "cyber-hemera",
- "cyber-lens",
  "cyber-tok",
  "cyber-tru",
  "iroh",

@@ -113,4 +113,11 @@ fn malformed_graphs_fail_without_panicking() {
     assert!(!verify_phi_claim(&claim.binding, &f.graph(), &f.phi0));
     let f = Fixture::new();
     assert!(!verify_phi_claim(&claim.binding, &f.graph(), &f.phi0[..3]));
+    // the exported step refuses the same input instead of indexing past the end
+    let mut bad = Fixture::new();
+    bad.s.edges.push((9, 0, g(1)));
+    assert!(trikernel_step(&bad.phi0, &bad.graph()).is_none());
+    let ok = Fixture::new();
+    assert!(trikernel_step(&ok.phi0[..3], &ok.graph()).is_none());
+    assert!(trikernel_step(&ok.phi0, &ok.graph()).is_some());
 }

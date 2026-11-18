@@ -47,8 +47,37 @@ fn verifies_from_signals(node: &LiveNode, cert: &EpochCertificate) -> bool {
         ctx: &ctx,
         params: &params,
         target: easy_target(),
+        budget: node.budget,
     };
     verify_epoch_cert(cert, Some(&inputs))
+}
+
+/// `tip_chain` has its counterpart: a light node takes a chain-verified tip
+/// through `light_join` — only a recomputed chain, never a certificate, puts
+/// it in chain mode — and from there `light_advance` extends it.
+#[test]
+fn a_light_node_joins_the_chain_and_advances() {
+    let mut full = LiveNode::new(NodeMode::Full, h(10));
+    full.bump_tip().unwrap(); // height 1
+    let joined = {
+        let (chain, head) = full.tip_chain().expect("a full node serves its chain");
+        Tip::join_chain(chain, &head)
+    };
+    assert!(joined.grade4());
+
+    let mut light = LiveNode::new(NodeMode::Light, h(12));
+    // untrusted until it has recomputed a chain: a bare step is refused
+    let early = TipStep { height: 1, root: h(1), leaves: [0u8; 32] };
+    assert!(light.light_advance(early, &[0u8; 32]).is_err());
+
+    light.light_join(joined).unwrap();
+    full.bump_tip().unwrap(); // height 2 — the step the light node follows
+    let (step, head) = {
+        let (chain, head) = full.tip_chain().unwrap();
+        (*chain.steps.last().unwrap(), head)
+    };
+    light.light_advance(step, &head).unwrap();
+    assert_eq!(light.tip.height, 2);
 }
 
 #[test]
