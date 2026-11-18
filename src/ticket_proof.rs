@@ -101,7 +101,7 @@ impl<'a> TicketRelation<'a> {
     }
 
     /// `v_j = v★(π_0..π_j)` for every prefix — the expensive part.
-    fn coalition_values(&self) -> Vec<F> {
+    pub(crate) fn coalition_values(&self) -> Vec<F> {
         let mut prefix: Vec<&Contribution> = Vec::with_capacity(self.n());
         self.order
             .iter()
@@ -161,23 +161,43 @@ impl Relation for TicketRelation<'_> {
     }
 }
 
-impl Witnessed for TicketRelation<'_> {
-    fn witness(&self) -> Option<CCSWitness> {
-        let instance_cols = self.instance().num_cols;
-        let mut z = vec![F::ZERO; instance_cols];
+impl TicketRelation<'_> {
+    /// The full assignment for coalition values `values` (ordering position
+    /// `j` ↦ `v_j`).
+    pub(crate) fn assignment(&self, values: &[F]) -> Vec<F> {
+        let mut z = vec![F::ZERO; self.instance().num_cols];
         z[0] = F::ONE;
         for (col, v) in self.public() {
             z[col] = v;
         }
-        for (j, v) in self.coalition_values().into_iter().enumerate() {
+        for (j, &v) in values.iter().enumerate() {
             z[self.v_col(j)] = v;
         }
-        Some(CCSWitness { z })
+        z
+    }
+
+    /// Pins of the accumulated profile: `(0, 1)`, the marginals and the
+    /// disclosed coalition values, strictly increasing. Every column the
+    /// relation reads is pinned: the values are public because the native
+    /// impulse check reads them (no CCS for impulse exists yet).
+    pub(crate) fn disclosed_pins(&self, values: &[F]) -> Vec<(usize, F)> {
+        let mut pins = vec![(0, F::ONE)];
+        pins.extend(self.public());
+        pins.extend(values.iter().enumerate().map(|(j, &v)| (self.v_col(j), v)));
+        pins
+    }
+}
+
+impl Witnessed for TicketRelation<'_> {
+    fn witness(&self) -> Option<CCSWitness> {
+        Some(CCSWitness {
+            z: self.assignment(&self.coalition_values()),
+        })
     }
 }
 
 /// Statement checks: shape, commitment, score and win test.
-fn check_statement(
+pub(crate) fn check_statement(
     inputs: &TicketInputs<'_>,
     beacon: &[u8; 32],
     cluster: &ClusterId,
