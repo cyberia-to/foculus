@@ -89,7 +89,7 @@ signal = {
   ν:              neuron_id                   subject (signing neuron)
   l⃗:              [cyberlink]                 links (L⁺), each a 7-tuple (ν, p, q, τ, a, v, t)
   Δφ*:            [(particle, F_p)]*          impulse: sparse focus update
-  σ:              zheng_proof                 recursive proof covering impulse + conviction
+  σ:              zheng_proof                 certificate covering impulse + conviction (below)
 
   // ordering — where the signal sits in causal and physical time
   device:         device_id                   which instance within ν (local sync only)
@@ -143,7 +143,8 @@ the proof covers:
 
 invalid signal → proof verification fails → signal rejected by any peer
 cost: one zheng verification — goal ≤ 1 ms (succinct profile); measured today
-      7.96 ms for the hash.tri fixture (zheng audit/succinct-profile-2026-10.md);
+      7.96 ms for the hash.tri fixture (zheng audit/succinct-profile-2026-10.md
+      §5, at commit a4b33e9, 2026-10-27);
       for the signal relation TODO(F-numbers)
 owner: cybergraph validates before calling bbg.apply()
 ```
@@ -328,7 +329,8 @@ client → peer: (axons_out, key=P, state_root=BBG_root)
 peer → client: Lens batch opening + all axon entries for P
 client verifies: Lens.verify(BBG_root, (axons_out, P, t), entries, proof)
 guarantee: "ALL outgoing axons from P. nothing hidden."
-proof size: one lens opening on the phase-2 PCS (WHIR); measured for bbg queries TODO(F-numbers)
+proof size: one lens opening on whichever PCS phase 2 picks (WHIR is zheng's bake-off
+choice, pending that row, §8 of the repair proposal); measured for bbg queries TODO(F-numbers)
 ```
 
 **incoming axons to particle Q:**
@@ -374,13 +376,19 @@ new client joins with no history:
 
 1. OBTAIN checkpoint = (BBG_root, decider proof of the accumulator, height)
    from any peer
-   size: goal ≤ 64 KB, constant in the number of blocks; measured TODO(F-numbers)
+   size: goal ≤ 64 KB, constant in the number of blocks with IVC;
+   measured TODO(F-numbers)
 
 2. VERIFY the decider proof against BBG_root
    the accumulator is ARC-style hash-based accumulation of every block's
-   step claims (zheng specs/accumulation.md, phase 3 of the proof-system repair);
-   the decider is one WHIR opening of the final accumulator
-   → ONE verification proves ALL history from genesis valid
+   step claims (zheng specs/accumulation.md at commit 61726aa, 2026-10-27;
+   phase 3 of the proof-system repair); the decider is one lens opening of
+   the final accumulator (WHIR is zheng's bake-off choice, pending phase 2)
+   → ONE verification proves ALL history from genesis valid — but only with
+     IVC, the accumulation verifier inside the step relation, which is what
+     makes the object constant; accumulation alone saves openings, not size,
+     so without IVC the client still checks every block's openings
+     (soft3 proposals/proof-system-repair.md §4)
    → cost: goal ≤ 1 ms; measured TODO(F-numbers)
    today (before accumulation): the tip chain is checked step by step,
    one hemera per step — 13.9 µs per step measured, linear in height

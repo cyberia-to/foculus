@@ -110,7 +110,7 @@ every signal carries a [[zheng]] proof sigma covering all operations in the batc
 
 $$\text{verify\_signal}(s, \sigma) \to \{\text{valid}, \text{invalid}\}$$
 
-algorithm: Spartan sumcheck over CCS with [[fp3]] challenges + one lens PCS opening (WHIR, the phase-2 winner) over [[Goldilocks field]]; see zheng `specs/execution.md`:
+algorithm: Spartan sumcheck over CCS with [[fp3]] challenges + one lens PCS opening over [[Goldilocks field]] — WHIR, zheng's bake-off choice for both size classes (`audit/succinct-profile-2026-10.md` §4, at commit a4b33e9), is the worked example below; which PCS ships per class is open until the phase-2 row closes (§8 of the repair proposal), and this tree still pins the pre-bake-off brakedown lens 0.2.0 (`Cargo.toml`); see zheng `specs/execution.md`:
 
 ```
 verify_signal(signal, proof):
@@ -125,7 +125,7 @@ verify_signal(signal, proof):
      # WHIR: hemera Merkle paths at the query positions + folding checks
 ```
 
-cost: the Merkle paths and folding checks of one opening — hemera hashes that grow with log N — plus field ops. goal ≤ 1 ms; measured today 7.96 ms for the hash.tri fixture (zheng `audit/succinct-profile-2026-10.md`), so the goal is not yet met. constant in computation length once accumulation lands (phase 3 of the [[proof-system-repair|proof system repair]]); until then a signal's σ is a public certificate v3, checked row by row. an invalid signal cannot be constructed -- the constraint system (18 patterns of [[nox]]: 16 compute + call + look) prevents it.
+cost: the Merkle paths and folding checks of one opening — hemera hashes that grow with log N — plus field ops. goal ≤ 1 ms; measured today 7.96 ms for the hash.tri fixture (zheng `audit/succinct-profile-2026-10.md` §5, at commit a4b33e9, 2026-10-27), so the goal is not yet met. constant in computation length once accumulation lands (phase 3 of the [[proof-system-repair|proof system repair]]); until then a signal's σ is a public certificate v3, checked row by row. an invalid signal cannot be constructed -- the constraint system (18 patterns of [[nox]]: 16 compute + call + look) prevents it.
 
 ## P6: ordering (immutable causal structure)
 
@@ -151,7 +151,7 @@ properties:
 | P2 completeness | [[NMT]] proof | namespace range proof | O(log n) | structural (unconditional) |
 | P3 availability | [[DAS]] + [[erasure coding]] | 2D Reed-Solomon + sampling | O(sqrt(n)) | probabilistic (information-theoretic) |
 | P4 liveness | gossip + erasure | k-of-n reconstruction | network-dependent | eventual (gossip propagation) |
-| P5 validity | [[zheng]] proof | Spartan + one lens PCS opening (WHIR) | O(log N) verify | computational (collision resistance) |
+| P5 validity | [[zheng]] proof | Spartan + one lens PCS opening (WHIR, pending phase 2) | O(log N) verify | computational (collision resistance) |
 | P6 ordering | [[hash chain]] + [[VDF]] | SHA/Hemera chain + sequential VDF | O(1) verify | physical (sequential time) |
 
 each property has a different guarantee type. each comes from a different branch of mathematics. each is independently verifiable. this is compositional security -- failure of one layer does not compromise others.
@@ -200,7 +200,7 @@ application (cybergraph operations)
      ↓ expressed as
 nox (18 patterns: 16 compute + call + look, focus-metered execution)
      ↓ proven by
-zheng (Spartan IOP + lens PCS: WHIR)
+zheng (Spartan IOP + lens PCS: WHIR, pending phase 2)
      ↓ committed via
 hemera (Poseidon2 hashing, NMT/MMR construction)
      ↓ over

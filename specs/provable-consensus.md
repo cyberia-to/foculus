@@ -182,11 +182,11 @@ prover time: 1.42B constraints at ~1 us per constraint (zheng prover on modern h
 
 this is per-epoch, not per-block. one proof covers the full tri-kernel computation for the entire graph state. blocks within the epoch inherit the proven phi*.
 
-with GPU acceleration (SuperSpartan's SpMV is embarrassingly parallel): ~2-3 minutes. practical for epoch boundaries (e.g. every 100 blocks = 500 seconds).
+with GPU acceleration (Spartan's SpMV is embarrassingly parallel): ~2-3 minutes. practical for epoch boundaries (e.g. every 100 blocks = 500 seconds).
 
 ## verification times
 
-verifier time: one succinct zheng verification — a Spartan sumcheck transcript plus one WHIR opening, whose hemera Merkle paths grow with log N. goal ≤ 1 ms independent of N; measured today 7.96 ms for the small hash.tri fixture and 270 ms for a 2^20 relation (zheng `audit/succinct-profile-2026-10.md`), so the goal is not yet met. a φ* relation of 1.42B constraints has no measurement: TODO(F-numbers).
+verifier time: one succinct zheng verification — a Spartan sumcheck transcript plus one lens PCS opening (measured on WHIR, zheng's bake-off choice; the phase-2 row has not closed), whose hemera Merkle paths grow with log N. goal ≤ 1 ms independent of N; measured today 7.96 ms for the small hash.tri fixture and 270 ms for a 2^20 relation (zheng `audit/succinct-profile-2026-10.md` §5, at commit a4b33e9, 2026-10-27), so the goal is not yet met. a φ* relation of 1.42B constraints has no measurement: TODO(F-numbers).
 
 today foculus checks φ* by native recomputation (`epoch_cert::verify_phi_on_cert`); no succinct φ* proof exists until the tri-kernel is an accumulated step relation (phase 3).
 
@@ -219,19 +219,21 @@ the target: one verification, goal ≤ 1 ms, to check that the complete tri-kern
 
 ## recursive structure
 
-provable consensus composes across epochs by zheng's accumulation (ARC-style hash-based accumulation, phase 3 of the [[proof-system-repair|proof system repair]]) — not by proving proofs:
+provable consensus composes across epochs by zheng's accumulation (ARC-style hash-based accumulation, phase 3 of the [[proof-system-repair|proof system repair]]) with IVC — the accumulation verifier running inside the next step's relation, which is what makes the object constant, not a proof that verifies a whole proof (§4 of the repair proposal):
 
 ```
 epoch 1: accumulate the step claims of φ*₁ over graph state G₁
 epoch 2: accumulate the claims of (G₂ = G₁ + new_signals ∧ φ*₂ correct)
          into the same accumulator: one root + a fixed number of claims
-epoch N: ONE decider — one WHIR opening of the final accumulator — covers ALL history
+epoch N: ONE decider — one lens opening of the final accumulator — covers ALL history
 
-decider proof: goal ≤ 64 KB, verify goal ≤ 1 ms, constant in the number of epochs;
+decider proof: goal ≤ 64 KB, verify goal ≤ 1 ms, constant in the number of epochs
+with IVC (the accumulation verifier inside the step relation, built in phase 3);
+without IVC the verifier still checks every epoch's openings — linear in epochs;
 measured TODO(F-numbers)
 ```
 
-a light client joining at epoch 1,000,000 verifies ONE proof. that proof attests:
+a light client joining at epoch 1,000,000 verifies ONE proof once IVC lands; until then it also checks the openings every epoch left behind. that proof attests:
 - all 1,000,000 graphs were valid
 - all 1,000,000 pi* computations were correct
 - all finality decisions followed from the correct pi*

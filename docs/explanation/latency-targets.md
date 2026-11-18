@@ -18,7 +18,7 @@ this document is explanation, not a parameters table. normative constants live i
 | layer | owns | does not own |
 |---|---|---|
 | [[foculus]] | consensus finality, epoch schedule, beacon delay, settlement depth $d$, domain-local liveness; light path for tip after fold | coin conservation rules, UI labels |
-| [[zheng]] | prove/verify cost; folding accumulator + decider (clock C machinery) | network propagation or $\phi^*$ threshold |
+| [[zheng]] | prove/verify cost; accumulation + decider (clock C machinery) | network propagation or $\phi^*$ threshold |
 | [[tok]] / PLUMB | *what* a pay/mint/burn means, conservation, when an Intent is well-formed | how long until the network agrees the Intent is final |
 | [[bbg]] | state after apply; Lens openings against a root | wall-clock convergence |
 | cyb [[sigma]] | view of holdings on a Card / neuron | any protocol clock |
@@ -53,7 +53,7 @@ size: unbounded        size: O(my slice)          size: ~constant
 |---|---|---|---|
 | full node | own apply of history | local state | prove against local state |
 | partial | apply my namespaces + peer completeness | local notes + openings | prove with local secrets + witnesses |
-| light client | checkpoint + `decide(folding_acc)` then fold each tip | Lens open against `BBG_root` | prove with local secrets; witnesses from peer openings |
+| light client | checkpoint + `decide(acc)` then accumulate each tip | Lens open against `BBG_root` | prove with local secrets; witnesses from peer openings |
 
 **in scope:** the light client is a first-class path for cyb on thin devices — join via fold, hold tip root, open balances, verify receive, authorize send. it is not a deferred optimization.
 
@@ -63,7 +63,8 @@ normative join steps (structural-sync):
 
 ```
 1. obtain checkpoint = (BBG_root, decider proof, height)  proof: goal ≤ 64 KB, measured TODO(F-numbers)
-2. verify(decider proof, BBG_root)                       one WHIR opening of the final accumulator
+2. verify(decider proof, BBG_root)                       one lens opening of the final accumulator
+                                                         (WHIR pending the phase-2 row)
                                                          goal ≤ 1 ms, measured TODO(F-numbers)
 3. open namespaces of interest                           one lens opening each (Merkle paths
                                                          included), size TODO(F-numbers)
@@ -105,8 +106,8 @@ a pure send/receive never waits on clock B. a link that only stakes conviction m
 
 when a thin client is sure the tip root continues valid history from genesis (or from an epoch checkpoint that itself is fold-backed).
 
-- owner: [[zheng]] folding accumulator + structural-sync light path + foculus headers
-- unit of work: join once (`decide`), then O(1) fold per block
+- owner: [[zheng]] accumulation + decider + structural-sync light path + foculus headers
+- unit of work: join once (`decide`), then one accumulation step per block
 - UX: "empty disk → trusted tip"; "balance/receive proofs bind to that tip"
 - role in money: **provides the root that openings and finality claims are checked against** on light/partial thin path
 
@@ -215,7 +216,7 @@ epoch length is a latency UX knob, not a security parameter once $k_{\min}$ and 
 | steady-state per tip | one accumulation step per block (prover side) + header | no re-decide from genesis |
 | re-join after long offline | one decide on latest acc | same as first join |
 
-join latency is dominated by **download + RTT**, not by verify. verify is effectively free compared to network. product scope: cold start on phone must complete fold verify before treating openings as money-grade.
+join latency is dominated by **download + RTT**, not by verify: on the accumulated path verify is one decider, goal ≤ 1 ms, effectively free compared to network. on today's step-by-step path it is not — 13.9 µs per step is 1.39 s at 100,000 steps (`audit/sound-settlement-proofs-2026-10.md` §5.4). product scope: cold start on phone must complete fold verify before treating openings as money-grade.
 
 ---
 
@@ -262,8 +263,8 @@ send/receive on light = grade 4 ∧ grade 2. reward-after-link settle = grade 3 
 | receive coin + notification | A + sense (+ C on light) | yes | verified opening + NOTIFY |
 | reward after link (pay legs) | A | yes | multi-payee Intent |
 | reward after link (attribution) | B | yes | epoch pipeline + openings of mint |
-| cold-start trust history | C | **yes** | folding accumulator + decider |
-| fold tip every block | C steady-state | **yes** | O(1) fold maintain |
+| cold-start trust history | C | **yes** | accumulation + decider |
+| fold tip every block | C steady-state | **yes** | one accumulation step per block |
 
 do not advertise "instant finality" for settle rewards. do not treat unauthenticated peer balance as received. do not ship light money UX without clock C.
 
@@ -304,7 +305,7 @@ do not advertise "instant finality" for settle rewards. do not treat unauthentic
 - [[cyber/light|light client]] — header spine and query openings  
 - [[provable consensus]] — proving $\phi^*$ for thin verifiers  
 - [[tok]] / PLUMB — pay, mint, Intent atomicity (conservation, not clocks)  
-- [[zheng]] recursion / accumulator — clock C machinery  
+- [[zheng]] accumulation / decider — clock C machinery  
 - reward specification / fold-mining — clock B machinery  
 
 ---
