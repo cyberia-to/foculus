@@ -24,7 +24,7 @@ the proof exactly; proof verification remains the caller's responsibility
 
 Version 1 is still decoded when its proof option byte is 0, yielding the same
 Signal; encoding always writes version 2. A version-1 signal whose option byte
-is 1 carried a legacy HyperNova proof, which proved nothing (zheng
+is 1 carried a legacy fold proof (unsound), which proved nothing (zheng
 `specs/decider.md`); decoding returns LegacyProof at the byte after the flag.
 
 Limits are part of this version: 16 MiB total signal bytes, 16384 links, 65536

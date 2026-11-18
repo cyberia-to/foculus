@@ -18,7 +18,7 @@
 //! trusted head commits to. What it does not: that each root is a valid
 //! state transition from the one before. That needs a step relation over
 //! bbg transitions and accumulation of its proofs — phase 3 of the proof
-//! repair. The HyperNova accumulator this replaces bound neither: its
+//! repair. The legacy fold accumulator this replaces bound neither: its
 //! statement was derived from the checkpoint it was meant to check.
 
 use bbg::{Checkpoint, Particle};
@@ -111,8 +111,9 @@ impl Tip {
     }
 
     /// Light join from a bbg checkpoint. Its accumulator is the legacy
-    /// HyperNova object, which proves nothing about the root, so the tip
-    /// stays untrusted; light clients join with [`Tip::join_chain`].
+    /// fold object (unsound, feature `legacy`), which proves nothing
+    /// about the root, so the tip stays untrusted; light clients join
+    /// with [`Tip::join_chain`].
     pub fn join_checkpoint(checkpoint: &Checkpoint) -> Self {
         Self {
             height: checkpoint.height,

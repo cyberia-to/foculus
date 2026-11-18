@@ -27,7 +27,7 @@ checked out in the stand. Rust 1.95.0, `--release`, Apple M4 Max.
 | `tip.rs` `TipProver`, `Tip::join_checkpoint`, `advance_fold`, `redecide` | `fold`, `decide`, `verify` | light client: the checkpoint root is the result of the folded history | the statement was derived from the checkpoint itself; a root the fold never saw was accepted (test `join_cannot_detect_a_checkpoint_root_the_fold_never_saw`) |
 | `epoch_cert.rs` `verify_phi_on_cert` | `phi::verify_phi_star` (internally `verify_spmv` → legacy `verify`) | φ* is the tri-kernel fixed point of the committed graph | sound by its final native recomputation; legacy SpMV proofs were dead weight; `graph_commit` never compared with the graphs passed in (launch row 40) |
 | `epoch_cert.rs` `verify_epoch_cert(cert, None)` | `verify_fold_seal` | settle receipt valid | returned true for a settling cert without any settle input |
-| `chain.rs` `Signal.proof: Option<zheng::Proof>`, `signal_codec/proof.rs` | `zheng::Proof` wire | σ on pay signals, durable | a Brakedown/HyperNova proof body: carried, never sound |
+| `chain.rs` `Signal.proof: Option<zheng::Proof>`, `signal_codec/proof.rs` | `zheng::Proof` wire | σ on pay signals, durable | a legacy Brakedown/fold proof body: carried, never sound |
 | `cli.rs`, `node.rs`, `radio_settle.rs`, `gossip.rs`, `wire.rs` | none directly; reach the above through `settle_with_peer_accs`, `ClusterAcc` | — | — |
 | `finality_evidence.rs` | doc pointer to `prove_phi_star` | — | — |
 | tests: `tests/signal_codec.rs` | `zheng::Proof`, `SumcheckPoly` | codec round trip of the legacy body | — |

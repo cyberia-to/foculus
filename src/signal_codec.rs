@@ -2,7 +2,7 @@
 //!
 //! Version 2 carries [`crate::proof::Proof`]. Version 1 is still decoded
 //! when it carries no proof; a version-1 signal with a proof (a legacy
-//! HyperNova body, which proved nothing) is rejected.
+//! fold body, which proved nothing) is rejected.
 pub(crate) mod cursor;
 mod proof;
 use crate::{BoxMoveRecord, CyberlinkRecord, Signal};

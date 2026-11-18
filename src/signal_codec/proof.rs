@@ -2,7 +2,7 @@
 //!
 //! Profile 1 (public certificate v3): statement[32], u32 count, count
 //! canonical Goldilocks u64 values, the last one nonzero. Version-1 bodies
-//! (legacy HyperNova proofs) are not decoded: they proved nothing.
+//! (legacy fold proofs) are not decoded: they proved nothing.
 use super::cursor::{Reader, Writer};
 use super::{CodecError, ErrorKind};
 use crate::proof::{PROFILE_PUBLIC, Proof, PublicProof};

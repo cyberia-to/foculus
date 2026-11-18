@@ -35,7 +35,7 @@ fn chain_join_under_trusted_head() {
     assert_eq!(p.seal_tip().unwrap().head, Some(p.head()));
 }
 
-/// The gap the HyperNova tip had (a checkpoint root the fold never saw was
+/// The gap the legacy fold tip had (a checkpoint root the fold never saw was
 /// accepted) is closed: any changed step changes the head.
 #[test]
 fn a_root_the_chain_never_saw_is_not_trusted() {
